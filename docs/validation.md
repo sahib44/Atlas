@@ -1,5 +1,25 @@
 # Validation record
 
+## Redesign and judge workflow
+
+Validated locally on 2026-11-12 in Docker Desktop.
+
+| Check | Result |
+| --- | --- |
+| PostgreSQL backend tests | **68 passed** |
+| Frontend component tests | **11 passed** |
+| Playwright browser scenarios | **8 passed** |
+| TypeScript compilation and Vite production build | Passed |
+
+The browser suite covered chair review, recruitment restoration, official slot
+confirmation and reassignment, tournament coverage, directory profile edits,
+profile navigation, and the previous import, campaign, and ticket workflows.
+The chair sign-out check verified that the login and sidebar load the same
+official logo. The captures in `docs/screenshots` use fabricated records from
+the isolated Playwright workspace.
+
+## Earlier validation
+
 Revalidated locally on 2026-10-27 with Docker Desktop (Linux ARM64 containers).
 
 | Check | Result |
@@ -22,9 +42,8 @@ observed sandbox delivery. It then created a shared ticket, verified that a
 private note produced no outbound message, sent a public sandbox reply, resolved
 the ticket, signed out, signed in as director, and inspected the audit trail.
 
-Screenshots in `docs/screenshots` show an earlier isolated E2E workspace. The
-tests use fabricated contacts and a separate database; they do not reset the
-main workspace. No real email or external email provider was used by tests.
+The tests use fabricated contacts and a separate database. No real email or
+external email provider was used by tests.
 
 The pilot browser scenario created a fabricated competition and three contacts,
 marked them accepted, filtered and selected them, attached a text file, then

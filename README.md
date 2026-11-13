@@ -10,7 +10,7 @@ adopted it, and it has no real users or production deployment. The included
 names, organizations, and addresses are fabricated. Campaign delivery writes
 only to a local sandbox outbox; it does not send email.
 
-The prototype currently supports role-based sign-in, a competition-based judge directory,
+The prototype currently supports role-based sign-in, judge recruitment and a confirmed assignment directory,
 CSV column mapping and duplicate merge review, direct recipient search, competition
 workspaces, campaign preview and approval, a PostgreSQL-backed sandbox worker,
 support tickets with private notes, dashboard metrics, and an audit trail.
@@ -20,6 +20,21 @@ mock. Contact records may hold syntactically valid addresses, but a queued pilot
 message produces only a local mock receipt. Campaigns and ticket replies accept syntactically valid email addresses but only
 produce local mock receipts. There are
 no SMTP credentials, email provider SDKs, domain lookups, or tracking pixels.
+
+## Screenshots and demos
+
+![MIST Deck operations overview in light mode](docs/screenshots/dashboard.png)
+
+- [Dark mode overview](docs/screenshots/dashboard-dark.png) · [Tablet layout](docs/screenshots/tablet.png)
+- [Judge recruitment and chair review](docs/screenshots/recruitment.png) · [Recruitment in dark mode](docs/screenshots/recruitment-dark.png)
+- [Arts competition coverage](docs/screenshots/arts-coverage.png) · [Official judge slots](docs/screenshots/competition-slots.png) · [Confirmed judge directory](docs/screenshots/judge-directory.png)
+- [Campaign preview](docs/screenshots/campaign.png) · [Sandbox outbox](docs/screenshots/outbox.png) · [Competitions tickets](docs/screenshots/tickets.png)
+- [Judge recruitment demo GIF](docs/screenshots/judge-recruitment.gif) · [Sandbox outreach demo GIF](docs/screenshots/sandbox-outreach.gif)
+
+The images and demos use fabricated data in a separate local database. The
+recruitment demo follows a candidate through chair review and confirmation. The
+outreach demo shows a personalized draft entering the sandbox and updating the
+candidate to **Awaiting response**.
 
 ## Start locally
 
@@ -103,16 +118,18 @@ the working workflows.
    keep separate, or skip. Low-confidence name-only suggestions never auto-merge.
 5. Return to the import, continue to commit, check the confirmation, and commit.
    Invalid rows remain downloadable in the error CSV.
-6. Open Judge directory to review competition, response, contact, and written
-   qualification. Export the current view as a spreadsheet-ready CSV.
-7. Select judges and email them, or create a campaign and search recipients by name
-   or email. Add one-off addresses with an optional switch to save them as judges.
-   Each recipient appears as a removable name chip. Preview, submit, approve and queue.
+6. In Judge Recruitment, add a candidate for a competition and use **Use an
+   existing contact** to select an imported record. Submit it for chair approval.
+7. After approval, use **Start Outreach** to create a campaign. You can also
+   search for approved recipients by name or email from the composer. Each
+   recipient appears as a removable name chip. Preview, submit, approve and queue.
 8. Watch separate messages appear in Sandbox outbox. No message has multiple
    recipients. The worker runs automatically.
-9. Create a simulated ticket with a sender name, email, subject and message. Add
-   an internal note and public reply, or forward the email to another address.
-10. Resolve the ticket. Sign in as director to inspect the audit trail.
+9. Record the candidate's acceptance and confirm an open slot. Open **Judge
+   Directory** to inspect the assignment and export the filtered roster as CSV.
+10. Create a simulated ticket with a sender name, email, subject and message.
+    Add an internal note and request chair approval for a public reply. Resolve
+    the ticket and sign in as director to inspect the audit trail.
 
 A director may cancel any nonterminal campaign, including queued/sending work;
 remaining messages will not be delivered. Approvals and previews are immutable
@@ -127,36 +144,41 @@ and Extemporaneous Drawing. Culinary Arts is the seeded pilot. Fixed
 competitions cannot be deleted through the API, regardless of role.
 
 Choose **Add pilot competition** inside a category to create another one. Enter
-its name and year; rules and procedures PDFs or DOCX files and existing judges
-are optional. Inside any competition, use **Add judge** to create a
-contact with a name and at least an email or phone, plus an optional written
-reason the person is qualified,
-or attach an existing directory contact. A contact can belong to multiple pilots;
-its response is tracked separately in each one.
+its name and year. Rules and procedures PDFs or DOCX files are optional.
+Existing contacts added during pilot creation enter chair review.
 
-Move each judge among **To contact**, **Awaiting response**, **Accepted**, and
-**Declined**. Filter by status or **Waiting 7+ days**, then select visible judges
-and choose **Email selected**. Only contacts with email who have not declined or
-opted out are eligible. The compose page creates an individual preview and mock
-outbox record for each selected judge after approval and queueing. Once the mock
-worker completes a pilot message, it moves a **To contact** judge to **Awaiting
-response** and resets the seven-day follow-up clock for someone already waiting.
-This is workflow state within the prototype, not proof of delivery to an inbox.
-For outreach outside the app, an organizer can change the status manually. A pilot
-can be deleted after three confirmation steps, including an exact name entry.
-It disappears from normal competition views while its deletion, actor, and
-historical campaign links remain in the local audit/database records.
-Open **Competitions → Deleted pilots** to see the deletion date and organizer.
-Uploaded documents are stored in the local database and are accessible only to
-signed-in users with judge access. Keep any real contact information or private
-rules out of commits, screenshots, and issue reports.
+## Judge recruitment and directory
 
-The Judge directory shows one row per competition assignment, with its own
-response. Unassigned contacts remain visible. Its **Export sheet** control
-downloads the filtered view as CSV, grouped by main category and competition;
-within each competition, rows follow the order judges were added. Columns are
-main category, competition, response, name, contact, qualification, year, and
-added date. CSV is spreadsheet-ready but does not create separate workbook tabs.
+Open **Judge Recruitment** or choose **Add judge** inside a competition to
+preselect it. Submit a name, email, intended competition and qualifications.
+Phone, notes and prior MIST involvement are optional. Existing contacts can be
+reused. Chairs and directors receive a request notification and can edit,
+approve or reject the request. New requests require approval before outreach.
+
+Use **Start Outreach** or **Send Follow-up** to open the campaign composer.
+After successful sandbox delivery, the app records the contact time and updates
+a **To contact** response to **Awaiting response**. Organizers can record an
+acceptance or decline manually. Declined candidates move to the archive.
+An authorized organizer can deliberately start a manual follow-up from a
+declined candidate's approved request.
+
+After acceptance, **Confirm as Judge** assigns a vacant slot in the approved
+competition. Each active competition has three slots. Each judge contact can
+hold one active slot per tournament year. Confirmation updates the official
+roster and coverage and moves the candidate out of active Recruitment.
+
+The **Judge Directory** lists confirmed assignments for the selected
+tournament. **Export CSV** downloads the filtered assignments. The profile
+shows contact details, qualifications, notes, conversations and assignment
+history. **Unconfirm** releases the slot and archives the withdrawal.
+Chairs and directors can still reassign judges from Competition Management.
+Existing nominations retain their historical responses. An accepted nomination
+requires a separate confirmation to occupy an official slot.
+
+Pilot deletion still requires three confirmations. **Competitions → Deleted
+pilots** shows the deletion date and organizer. Uploaded rules and procedures
+are stored locally and require judge access. Keep real contact details and
+private documents out of commits, screenshots and issue reports.
 
 Campaign drafts can hold up to five PDF, DOCX, PNG, JPG, TXT, or CSV attachments
 of 5 MB each. Attachments can be added or removed before submission, then appear
@@ -270,10 +292,10 @@ the `mist` package under `apps/api`; do not duplicate models in `apps/worker`.
 - Frontend application and route screens: `apps/web/src/`.
 - Frontend component and browser tests: `apps/web/src/workflows.test.tsx` and
   `apps/web/tests/`.
-- Competition screens: `apps/web/src/Pilots.tsx`; directory screen:
-  `apps/web/src/JudgeDirectory.tsx`; competition and directory APIs:
-  `apps/api/mist/competition_catalog.py`, `apps/api/mist/pilots.py`, and
-  `apps/api/mist/directory.py`.
+- Competition, recruitment, and directory screens: `apps/web/src/Pilots.tsx`,
+  `apps/web/src/JudgeRecruitment.tsx`, and `apps/web/src/JudgeDirectory.tsx`.
+- Competition, recruitment, and assignment services: `apps/api/mist/pilots.py`,
+  `apps/api/mist/recruitment.py`, and `apps/api/mist/assignments.py`.
 - FastAPI routes, services, models, seed, and worker: `apps/api/mist/`.
 - Backend tests and migrations: `apps/api/tests/` and `apps/api/migrations/`.
 - Local orchestration: `docker-compose.yml`; fabricated import files: `sample-data/`.
@@ -324,14 +346,13 @@ not evidence of external deliverability.
 
 ## Verified local build
 
-The final run passed **53 backend tests, 11 frontend tests, and 5 Playwright
-scenarios**, plus TypeScript compilation, Docker startup and Alembic consistency.
+The redesigned local build passed **68 backend tests, 11 frontend tests, and
+8 Playwright scenarios**, plus TypeScript compilation and Docker startup.
 See [validation details](docs/validation.md) and the
 [requirements map](docs/requirements-matrix.md).
 
-![Dashboard with fabricated local test data](docs/screenshots/dashboard.png)
-
-[View the tablet layout](docs/screenshots/tablet.png)
+The [CSV import benchmark](docs/benchmarks/imports-2026-10-29.md) records
+results for the earlier source revision and includes reproduction steps.
 
 
 ## Shared inbox and team permissions
@@ -350,7 +371,8 @@ emails. Unread judge replies appear in red in the campaigns conversation list an
 add an exclamation mark to the matching category, competition and judge. Judges
 with unread replies appear first. Opening the judge conversation marks the
 currently received messages as read for the shared workspace. Later replies remain
-unread. Clicking a judge's name always opens their email conversation.
+unread. Competition Details links to judge conversations. The directory opens
+the judge profile, which has a Conversations tab and an Email judge action.
 
 A live mailbox is **not connected**. Use **Simulate incoming email** on Campaigns
 to test receiving. Messages from known judge addresses become judge conversations;
