@@ -403,8 +403,8 @@ def forward_message(id: UUID, data: ForwardIn, user=Depends(require("outbox")), 
     if not original or original.status != "sent":
         fail("invalid_forward", "Only sent sandbox messages can be forwarded.", 400)
     address = contact_email(data.recipient_email)
-    if original.related_ticket_id:
-        ticket = get(db, Ticket, original.related_ticket_id)
+    ticket = get(db, Ticket, original.related_ticket_id) if original.related_ticket_id else None
+    if ticket:
         if address == ticket.requester_email and not allowed(user, "ticket_approve"):
             fail("chair_approval_required", "Use the approved public reply flow to email this requester.", 403)
     blocked = outreach_block(db, None, address)
@@ -416,10 +416,12 @@ def forward_message(id: UUID, data: ForwardIn, user=Depends(require("outbox")), 
     body += f"---------- Forwarded message ----------\nTo: {original.recipient_email}\nSubject: {original.subject}\n\n{original.body_text}"
     forwarded = Outbound(
         recipient_email=address, recipient_name=address, subject=subject, body_text=body,
+        related_ticket_id=original.related_ticket_id,
         forwarded_from_id=original.id, idempotency_key=f"forward:{uuid4()}",
     )
     db.add(forwarded)
-    audit(db, user, "message.forwarded", forwarded, "Queued a sandbox forward", after={"forwarded_from_id": str(id), "recipient_email": address})
+    audit(db, user, "message.forwarded", ticket if ticket else forwarded,
+          "Queued a sandbox forward", after={"forwarded_from_id": str(id), "recipient_email": address})
     db.commit()
     return {**serialize(forwarded), "attachments": attachments_for(db, source_campaign_id(db, original))}
 

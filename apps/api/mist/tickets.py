@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import UUID, uuid4, uuid5
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select, or_, update
@@ -18,6 +19,10 @@ from .services import *
 
 router = APIRouter(prefix="/api")
 from .ticket_flow import TRANSITIONS, STATUSES, apply_status_action, text_value, changed, mark_ticket_notifications, supersede_drafts, consume_approval
+
+
+class TicketPage(Page):
+    counts: dict[str, int]
 
 
 def ticket_scope(user):
@@ -41,7 +46,7 @@ def ticket_get(db, user, id, lock=False):
     return ticket
 
 
-@router.get("/tickets", response_model=Page)
+@router.get("/tickets", response_model=TicketPage)
 def tickets(
     request: Request,
     page_no: int = Query(1, alias="page", ge=1),
@@ -64,25 +69,45 @@ def tickets(
         if value not in TRANSITIONS:
             fail("invalid_status", "Choose a valid ticket status.")
         stmt = stmt.where(Ticket.status == value)
-    if params.get("view") == "waiting":
-        stmt = stmt.where(Ticket.status.in_(["new", "in_progress", "waiting_on_organizer"]))
-    elif params.get("view") == "open":
-        stmt = stmt.where(Ticket.status.not_in(["resolved", "closed"]))
-    elif params.get("view") == "overdue":
-        from datetime import timedelta
-        stmt = stmt.where(Ticket.status.not_in(["resolved", "closed"]), Ticket.last_message_at < now() - timedelta(days=3))
+    open_ticket = Ticket.status.not_in(["resolved", "closed"])
+    views = {
+        "open": open_ticket,
+        "waiting": Ticket.status.in_(["new", "in_progress", "waiting_on_organizer"]),
+        "overdue": open_ticket & (Ticket.last_message_at < now() - timedelta(days=3)),
+    }
+    counts = db.execute(stmt.with_only_columns(
+        func.count(Ticket.id).label("all"),
+        *(func.count(Ticket.id).filter(condition).label(name) for name, condition in views.items()),
+    )).mappings().one()
+    condition = views.get(params.get("view", ""))
+    if condition is not None:
+        stmt = stmt.where(condition)
     sort = params.get("sort", "newest")
     ordering = {
         "newest": Ticket.created_at.desc(),
         "oldest": Ticket.created_at,
         "activity": Ticket.last_message_at.desc(),
     }
-    return page(
+    result = page(
         db,
         stmt.order_by(ordering.get(sort, Ticket.created_at.desc()), Ticket.id),
         page_no,
         page_size,
     )
+    ids = [UUID(item["id"]) for item in result["items"]]
+    if ids:
+        latest = dict(db.execute(
+            select(TicketMessage.ticket_id, func.left(TicketMessage.body, 160))
+            .where(TicketMessage.ticket_id.in_(ids)).distinct(TicketMessage.ticket_id)
+            .order_by(TicketMessage.ticket_id, TicketMessage.created_at.desc(), TicketMessage.id.desc())
+        ).all())
+        unread = set(db.scalars(select(Notification.ticket_id).where(
+            Notification.ticket_id.in_(ids), Notification.kind == "ticket",
+            Notification.recipient_user_id.is_(None), Notification.read_at.is_(None),
+        )))
+        for item, id in zip(result["items"], ids):
+            item["preview"], item["unread"] = latest.get(id, ""), id in unread
+    return {**result, "counts": dict(counts)}
 
 
 @router.post("/tickets", response_model=ObjectView)
@@ -214,6 +239,7 @@ def thread(
     kind: str,
     page_no: int = Query(1, alias="page", ge=1),
     page_size: int = Query(25, ge=1, le=100),
+    message_page: int | None = Query(None, ge=1),
     user=Depends(ticket_user),
     db=Depends(get_db),
 ):
@@ -226,8 +252,36 @@ def thread(
         if cls == Audit
         else select(cls).where(cls.ticket_id == id)
     )
+    if kind == "notes" and message_page is not None:
+        # Keep timeline notes in the same time window as the visible email page.
+        def boundary(number):
+            return db.scalar(select(TicketMessage.created_at).where(
+                TicketMessage.ticket_id == id,
+            ).order_by(TicketMessage.created_at, TicketMessage.id).offset((number - 1) * 25).limit(1))
+
+        if message_page > 1 and (start := boundary(message_page)):
+            stmt = stmt.where(TicketNote.created_at >= start)
+        if end := boundary(message_page + 1):
+            stmt = stmt.where(TicketNote.created_at < end)
     order = (cls.created_at.desc(), cls.id.desc()) if kind == "notes" else (cls.created_at, cls.id)
-    return page(db, stmt.order_by(*order), page_no, page_size)
+    result = page(db, stmt.order_by(*order), page_no, page_size)
+    if kind == "messages":
+        ids = [UUID(item["outbound_message_id"]) for item in result["items"] if item["outbound_message_id"]]
+        if ids:
+            states = dict(db.execute(select(Outbound.id, Outbound.status).where(
+                Outbound.id.in_(ids), Outbound.related_ticket_id == id,
+            )).all())
+            for item in result["items"]:
+                if outbound_id := item["outbound_message_id"]:
+                    item["delivery_status"] = states.get(UUID(outbound_id))
+    if kind == "notes":
+        ids = {UUID(item["created_by"]) for item in result["items"] if item["created_by"]}
+        if ids:
+            names = dict(db.execute(select(User.id, User.full_name).where(User.id.in_(ids))).all())
+            for item in result["items"]:
+                if author := item["created_by"]:
+                    item["author_name"] = names.get(UUID(author))
+    return result
 
 
 @router.post("/tickets/{id}/status", response_model=ObjectView)

@@ -516,7 +516,7 @@ export function Outbox() {
                   <td>
                     {r.related_ticket_id ? (
                       <Link to={"/tickets/" + r.related_ticket_id}>
-                        Support ticket
+                        Ticket
                       </Link>
                     ) : (
                       "Campaign"

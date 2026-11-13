@@ -198,7 +198,8 @@ export function HistoryBack() {
   const navigate = useNavigate();
   const location = useLocation();
   const params = new URLSearchParams(location.search);
-  const fallback = location.pathname === "/outbox" && params.get("ticket_id") ? `/tickets/${params.get("ticket_id")}` : "/dashboard";
+  const ticketId = params.get("ticket_id");
+  const fallback = location.pathname === "/outbox" && ticketId ? `/tickets/${ticketId}` : location.pathname === "/tickets/new" ? "/tickets" : "/dashboard";
   const hasHistory = typeof window.history.state?.idx === "number" && window.history.state.idx > 0;
   return <button type="button" className="history-back" aria-label="Go back" title="Back to the previous page" disabled={!hasHistory && location.pathname === fallback} onClick={() => hasHistory ? navigate(-1) : navigate(fallback)}><ArrowLeft size={17} /><span>Back</span></button>;
 }

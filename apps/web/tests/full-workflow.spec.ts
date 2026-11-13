@@ -207,16 +207,17 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await page
     .getByRole("button", { name: "Save private internal note" })
     .click();
-  await expect(page.locator(".private-notes")).toContainText(
+  await expect(page.locator(".ticket-inline-note")).toContainText(
     "Private: organizer review completed.",
   );
   for (const theme of ["light", "dark"]) {
     if (theme === "dark") await page.getByRole("button", { name: "Switch to dark mode" }).click();
-    const surface = await page.locator(".ticket-layout .panel").first().evaluate(element => getComputedStyle(element).backgroundColor);
-    for (const selector of [".composer.private", ".composer.private textarea", ".private-notes-panel", ".private-notes"]) {
-      await expect.poll(() => page.locator(selector).evaluate(element => getComputedStyle(element).backgroundColor)).toBe(surface);
-      await expect.poll(() => page.locator(selector).evaluate(element => getComputedStyle(element).borderTopColor)).toBe(theme === "dark" ? "rgb(227, 189, 69)" : "rgb(180, 138, 18)");
-    }
+    const note = page.locator(".ticket-inline-note");
+    const mail = page.locator(".ticket-email").first();
+    const surface = await mail.evaluate(element => getComputedStyle(element).backgroundColor);
+    await expect.poll(() => note.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(surface);
+    await expect(note.getByText("Internal note", { exact: false })).toBeVisible();
+    await expect(page.locator(".composer.private textarea")).toBeVisible();
     await page.screenshot({ path: `test-results/internal-notes-${theme}.png`, fullPage: true });
   }
   await page.getByRole("button", { name: "Switch to light mode" }).click();
@@ -240,7 +241,7 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await chairApi.dispose();
   await expect(page.getByRole("button", { name: "Send public sandbox reply" })).toBeEnabled();
   await page.getByRole("button", { name: "Send public sandbox reply" }).click();
-  await expect(page.locator(".conversation.staff_reply")).toContainText(
+  await expect(page.locator(".ticket-email.staff_reply")).toContainText(
     "Yes, your fabricated entry may be updated.",
   );
   await expect
@@ -256,11 +257,14 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
     .selectOption("resolved");
   await expect(page.getByRole("button", { name: "Update status", exact: true }).last()).toBeDisabled();
   await page.getByLabel("Resolution note", { exact: true }).fill("Confirmed the submission can be updated.");
-  await page.locator("aside").getByRole("button", { name: "Update status", exact: true }).click();
+  await page.getByRole("button", { name: "Update status", exact: true }).click();
   await expect(
-    page.locator(".page-heading .badge").filter({ hasText: "Resolved" }),
+    page.locator(".ticket-thread-title .badge").filter({ hasText: "Resolved" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Forward email", exact: true }).first().click();
+  const quote = page.getByRole("region", { name: "Forwarded message preview" });
+  await expect(quote).toContainText("May I update my fabricated arts entry?");
+  await expect(quote).not.toContainText("Private: organizer review completed.");
   await page.getByLabel("Forward to", { exact: true }).fill("registration@example.org");
   await page.getByLabel("Note (optional)").fill("Please review this question.");
   await page.getByRole("button", { name: "Queue sandbox forward", exact: true }).click();
@@ -318,5 +322,5 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await login("tech@example.com");
   await expect(page.getByRole("navigation").getByRole("link", { name: "Competitions", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Create campaign" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "New ticket" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "New simulated ticket" })).toHaveCount(0);
 });

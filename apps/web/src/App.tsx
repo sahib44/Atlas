@@ -37,7 +37,7 @@ import brandMark from "./mist-deck-mark.svg?no-inline";
 import "./judge-workspace.css";
 import { Imports, ImportWizard, Duplicates, DuplicateDetail } from "./Imports";
 import { Campaigns, CampaignNew, CampaignDetail, Outbox } from "./Campaigns";
-import { Tickets, TicketNew, TicketDetail } from "./Tickets";
+import { Tickets, TicketNew } from "./Tickets";
 import { Competitions, CompetitionCategory, PilotDetail, DeletedCompetitions } from "./Pilots";
 const JudgeDirectory = lazy(() => import("./JudgeDirectory").then(module => ({ default: module.JudgeDirectory })));
 const JudgeRecruitment = lazy(() => import("./JudgeRecruitment").then(module => ({ default: module.JudgeRecruitment })));
@@ -234,6 +234,7 @@ export default function App() {
   );
   const { pathname } = useLocation();
   const judgeWorkspace = pathname === "/recruitment" || pathname === "/judges";
+  const ticketWorkspace = /^\/tickets(?:\/(?!new$)[^/]+)?$/.test(pathname);
   const [theme, setTheme] = useState<Theme>(() =>
     window.localStorage.getItem("mist-theme") === "dark" ? "dark" : "light",
   );
@@ -295,7 +296,7 @@ export default function App() {
           <WorkspaceNavigation user={user} onNavigate={() => setMenu(false)} />
           <WorkspaceAccount user={user} onSignOut={signOut} onOpenProfile={() => setMenu(false)} />
         </Modal>}
-        <div className={judgeWorkspace ? "main-shell judge-app" : "main-shell"}>
+        <div className={`main-shell${judgeWorkspace ? " judge-app" : ""}${ticketWorkspace ? " tickets-app" : ""}`}>
           <header className="topbar">
             <button
               ref={menuTrigger}
@@ -433,7 +434,7 @@ export default function App() {
                 path="/tickets/:id"
                 element={
                   <Guard permission="tickets">
-                    <TicketDetail />
+                    <Tickets />
                   </Guard>
                 }
               />

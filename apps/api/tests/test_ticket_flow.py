@@ -174,3 +174,38 @@ def test_forward_to_requester_does_not_bypass_chair_approval(director):
     ticket = create(director)
     original = ok(director.get(f"/api/tickets/{ticket['id']}/messages"))["items"][0]
     assert director.post(f"/api/tickets/{ticket['id']}/messages/{original['id']}/forward", json={"recipient_email": ticket["requester_email"]}).status_code == 403
+
+
+def test_outbox_forward_chain_keeps_ticket_scope_and_requester_guard(director):
+    ticket = create(director)
+    reply = ok(director.post(f"/api/tickets/{ticket['id']}/messages", json={
+        "body": "Please check the latest rulebook.", "request_id": str(uuid4()),
+    }))
+    assert run_once("ticket-forward-test")
+    login(director, "competitions")
+    forwarded = ok(director.post(f"/api/outbox/{reply['outbound_message_id']}/forward", json={
+        "recipient_email": "registration@example.org",
+    }))
+    assert forwarded["related_ticket_id"] == ticket["id"]
+    assert run_once("ticket-forward-test")
+    assert director.post(f"/api/outbox/{forwarded['id']}/forward", json={
+        "recipient_email": ticket["requester_email"],
+    }).status_code == 403
+    assert ok(director.get(f"/api/outbox?ticket_id={ticket['id']}"))["total"] == 2
+    login(director, "tech")
+    assert ok(director.get("/api/outbox"))["total"] == 0
+
+
+def test_inbox_previews_only_public_email_and_reports_view_counts(director):
+    ticket = create(director)
+    id = ticket["id"]
+    ok(director.post(f"/api/tickets/{id}/notes", json={"body": "Private research.", "request_id": str(uuid4())}))
+    result = ok(director.get("/api/tickets?view=overdue"))
+    assert result["total"] == 0
+    assert result["counts"] == {"all": 1, "open": 1, "waiting": 1, "overdue": 0}
+    row = ok(director.get("/api/tickets?view=waiting"))["items"][0]
+    assert row["preview"] == "Can you help with the rules?" and row["unread"] is True
+    ok(director.post(f"/api/tickets/{id}/messages", json={"body": "Public follow-up.", "request_id": str(uuid4())}))
+    row = ok(director.get("/api/tickets"))["items"][0]
+    assert row["preview"] == "Public follow-up." and row["unread"] is False
+    assert ok(director.get(f"/api/tickets/{id}/messages"))["items"][-1]["delivery_status"] == "queued"

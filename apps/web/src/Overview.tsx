@@ -121,7 +121,7 @@ export function Dashboard() {
 
   return <div className="overview">
     <Heading title="Operations overview">
-      {can(user, "tickets") && <Link className="button" to="/tickets/new"><Plus size={16} /> New ticket</Link>}
+      {can(user, "tickets") && <Link className="button" to="/tickets/new"><Plus size={16} /> New simulated ticket</Link>}
       {showCampaigns && <Link className="button primary" to="/campaigns/new"><Plus size={16} /> Create campaign</Link>}
     </Heading>
     <ErrorBox error={query.error} />
