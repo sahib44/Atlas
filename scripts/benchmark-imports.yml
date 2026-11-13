@@ -1,0 +1,36 @@
+# Standalone: never combine this file with the working application's Compose files.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mist_benchmark
+      POSTGRES_DB: mist_import_benchmark
+      # Disposable, unpublished database on an internal network; no credentials saved.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    tmpfs:
+      - /var/lib/postgresql/data:size=512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mist_benchmark -d mist_import_benchmark"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  benchmark:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://mist_benchmark@db:5432/mist_import_benchmark
+      MIST_IMPORT_BENCHMARK: "1"
+      MIST_SOURCE_REVISION: ${MIST_SOURCE_REVISION:?Set this to git rev-parse HEAD}
+      COOKIE_SECURE: "false"
+      PYTHONPATH: /app
+    volumes:
+      - ./benchmark_imports.py:/benchmark.py:ro
+      - ../docs/benchmarks:/results
+    depends_on:
+      db:
+        condition: service_healthy
+    command: python /benchmark.py --output /results/imports-2026-10-29.json
+networks:
+  default:
+    internal: true

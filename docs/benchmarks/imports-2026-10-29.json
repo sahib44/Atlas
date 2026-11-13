@@ -1,0 +1,805 @@
+{
+  "seed": 20261029,
+  "source_revision": "a96eb26ce623165ec367c821b13508b95df372be",
+  "started_at": "2026-10-29T18:27:04.983549+00:00",
+  "starting_contacts": 1000,
+  "environment": {
+    "platform": "Linux-7.0.12-linuxkit-aarch64-with-glibc2.41",
+    "python": "3.12.14",
+    "postgres": "PostgreSQL 16.15 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit",
+    "cpus_visible": 10,
+    "packages": {
+      "fastapi": "0.115.12",
+      "uvicorn": "0.34.2",
+      "SQLAlchemy": "2.0.40",
+      "psycopg": "3.2.6",
+      "httpx": "0.28.1"
+    }
+  },
+  "warmups_per_size": 1,
+  "measured_repetitions": 5,
+  "stop_after_phase_s": 120,
+  "runs": [
+    {
+      "size": 100,
+      "iteration": 0,
+      "warmup": true,
+      "fixture_sha256": "dd72e6c770871e2dca548408f0bceedea5870925cbe022e409b86067136918dd",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 12103,
+      "composition": {
+        "invalid": 5,
+        "exact_email": 30,
+        "new": 50,
+        "similar_organization": 5,
+        "name_organization": 10
+      },
+      "upload_s": 0.018704332993365824,
+      "mapping_s": 0.006072624993976206,
+      "analysis_s": 1.5053835419967072,
+      "candidate_types": {
+        "exact_email": 30,
+        "name_organization": 10,
+        "name_only": 34,
+        "similar_organization": 8
+      },
+      "review_rows": 48,
+      "incidental_strong_candidates": 3,
+      "incidental_weak_candidates": 34,
+      "expected_duplicate_targets_found": 45,
+      "scripted_review_s": 0.1492630409920821,
+      "commit_s": 0.36647637499845587,
+      "repeat_commit_s": 0.013328458997420967,
+      "created": 50,
+      "updated": 45,
+      "skipped": 5,
+      "final_contacts": 1050,
+      "checks": "passed",
+      "machine_phases_s": 1.890564249988529
+    },
+    {
+      "size": 100,
+      "iteration": 1,
+      "warmup": false,
+      "fixture_sha256": "dd72e6c770871e2dca548408f0bceedea5870925cbe022e409b86067136918dd",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 12103,
+      "composition": {
+        "invalid": 5,
+        "exact_email": 30,
+        "new": 50,
+        "similar_organization": 5,
+        "name_organization": 10
+      },
+      "upload_s": 0.01726116699865088,
+      "mapping_s": 0.0028909169923281297,
+      "analysis_s": 1.4618285829928936,
+      "candidate_types": {
+        "name_only": 34,
+        "similar_organization": 8,
+        "exact_email": 30,
+        "name_organization": 10
+      },
+      "review_rows": 48,
+      "incidental_strong_candidates": 3,
+      "incidental_weak_candidates": 34,
+      "expected_duplicate_targets_found": 45,
+      "scripted_review_s": 0.12859516699973028,
+      "commit_s": 0.3348676669993438,
+      "repeat_commit_s": 0.002903290995163843,
+      "created": 50,
+      "updated": 45,
+      "skipped": 5,
+      "final_contacts": 1050,
+      "checks": "passed",
+      "machine_phases_s": 1.8139574169908883
+    },
+    {
+      "size": 100,
+      "iteration": 2,
+      "warmup": false,
+      "fixture_sha256": "dd72e6c770871e2dca548408f0bceedea5870925cbe022e409b86067136918dd",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 12103,
+      "composition": {
+        "invalid": 5,
+        "exact_email": 30,
+        "new": 50,
+        "similar_organization": 5,
+        "name_organization": 10
+      },
+      "upload_s": 0.010844541000551544,
+      "mapping_s": 0.0028448330122046173,
+      "analysis_s": 1.5029379170009634,
+      "candidate_types": {
+        "exact_email": 30,
+        "name_only": 34,
+        "name_organization": 10,
+        "similar_organization": 8
+      },
+      "review_rows": 48,
+      "incidental_strong_candidates": 3,
+      "incidental_weak_candidates": 34,
+      "expected_duplicate_targets_found": 45,
+      "scripted_review_s": 0.13295008399290964,
+      "commit_s": 0.3386642080004094,
+      "repeat_commit_s": 0.0034157500049332157,
+      "created": 50,
+      "updated": 45,
+      "skipped": 5,
+      "final_contacts": 1050,
+      "checks": "passed",
+      "machine_phases_s": 1.8524466660019243
+    },
+    {
+      "size": 100,
+      "iteration": 3,
+      "warmup": false,
+      "fixture_sha256": "dd72e6c770871e2dca548408f0bceedea5870925cbe022e409b86067136918dd",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 12103,
+      "composition": {
+        "invalid": 5,
+        "exact_email": 30,
+        "new": 50,
+        "similar_organization": 5,
+        "name_organization": 10
+      },
+      "upload_s": 0.010522915996261872,
+      "mapping_s": 0.0025643749977461994,
+      "analysis_s": 1.7468309169926215,
+      "candidate_types": {
+        "exact_email": 30,
+        "similar_organization": 8,
+        "name_only": 34,
+        "name_organization": 10
+      },
+      "review_rows": 48,
+      "incidental_strong_candidates": 3,
+      "incidental_weak_candidates": 34,
+      "expected_duplicate_targets_found": 45,
+      "scripted_review_s": 0.18731350101006683,
+      "commit_s": 0.4023335839883657,
+      "repeat_commit_s": 0.004739625001093373,
+      "created": 50,
+      "updated": 45,
+      "skipped": 5,
+      "final_contacts": 1050,
+      "checks": "passed",
+      "machine_phases_s": 2.159687416977249
+    },
+    {
+      "size": 100,
+      "iteration": 4,
+      "warmup": false,
+      "fixture_sha256": "dd72e6c770871e2dca548408f0bceedea5870925cbe022e409b86067136918dd",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 12103,
+      "composition": {
+        "invalid": 5,
+        "exact_email": 30,
+        "new": 50,
+        "similar_organization": 5,
+        "name_organization": 10
+      },
+      "upload_s": 0.018751083000097424,
+      "mapping_s": 0.003910500003257766,
+      "analysis_s": 1.575909959996352,
+      "candidate_types": {
+        "exact_email": 30,
+        "name_organization": 10,
+        "name_only": 34,
+        "similar_organization": 8
+      },
+      "review_rows": 48,
+      "incidental_strong_candidates": 3,
+      "incidental_weak_candidates": 34,
+      "expected_duplicate_targets_found": 45,
+      "scripted_review_s": 0.1350523750006687,
+      "commit_s": 0.343490582992672,
+      "repeat_commit_s": 0.002999040996655822,
+      "created": 50,
+      "updated": 45,
+      "skipped": 5,
+      "final_contacts": 1050,
+      "checks": "passed",
+      "machine_phases_s": 1.9381516259891214
+    },
+    {
+      "size": 100,
+      "iteration": 5,
+      "warmup": false,
+      "fixture_sha256": "dd72e6c770871e2dca548408f0bceedea5870925cbe022e409b86067136918dd",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 12103,
+      "composition": {
+        "invalid": 5,
+        "exact_email": 30,
+        "new": 50,
+        "similar_organization": 5,
+        "name_organization": 10
+      },
+      "upload_s": 0.011309457986499183,
+      "mapping_s": 0.0028197080100653693,
+      "analysis_s": 1.493925667993608,
+      "candidate_types": {
+        "name_only": 34,
+        "exact_email": 30,
+        "similar_organization": 8,
+        "name_organization": 10
+      },
+      "review_rows": 48,
+      "incidental_strong_candidates": 3,
+      "incidental_weak_candidates": 34,
+      "expected_duplicate_targets_found": 45,
+      "scripted_review_s": 0.138734124993789,
+      "commit_s": 0.3628454999998212,
+      "repeat_commit_s": 0.0029002079972997308,
+      "created": 50,
+      "updated": 45,
+      "skipped": 5,
+      "final_contacts": 1050,
+      "checks": "passed",
+      "machine_phases_s": 1.8680806259799283
+    },
+    {
+      "size": 500,
+      "iteration": 0,
+      "warmup": true,
+      "fixture_sha256": "7617ca21ef16db2e1b8c76859b6d606be34b004cf19ee3f70fb5513ed6f4fbe9",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 60873,
+      "composition": {
+        "new": 250,
+        "exact_email": 150,
+        "name_organization": 50,
+        "similar_organization": 25,
+        "invalid": 25
+      },
+      "upload_s": 0.03668325000035111,
+      "mapping_s": 0.002790416998323053,
+      "analysis_s": 8.503936545996112,
+      "candidate_types": {
+        "name_only": 168,
+        "exact_email": 150,
+        "name_organization": 50,
+        "similar_organization": 30
+      },
+      "review_rows": 229,
+      "incidental_strong_candidates": 5,
+      "incidental_weak_candidates": 168,
+      "expected_duplicate_targets_found": 225,
+      "scripted_review_s": 0.7280357919953531,
+      "commit_s": 1.8504547089978587,
+      "repeat_commit_s": 0.0039364590047625825,
+      "created": 250,
+      "updated": 225,
+      "skipped": 25,
+      "final_contacts": 1250,
+      "checks": "passed",
+      "machine_phases_s": 10.391074504994322
+    },
+    {
+      "size": 500,
+      "iteration": 1,
+      "warmup": false,
+      "fixture_sha256": "7617ca21ef16db2e1b8c76859b6d606be34b004cf19ee3f70fb5513ed6f4fbe9",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 60873,
+      "composition": {
+        "new": 250,
+        "exact_email": 150,
+        "name_organization": 50,
+        "similar_organization": 25,
+        "invalid": 25
+      },
+      "upload_s": 0.04589924999163486,
+      "mapping_s": 0.0030221669876482338,
+      "analysis_s": 8.454497170998366,
+      "candidate_types": {
+        "similar_organization": 30,
+        "exact_email": 150,
+        "name_only": 168,
+        "name_organization": 50
+      },
+      "review_rows": 229,
+      "incidental_strong_candidates": 5,
+      "incidental_weak_candidates": 168,
+      "expected_duplicate_targets_found": 225,
+      "scripted_review_s": 0.6960051669884706,
+      "commit_s": 1.8071685009927023,
+      "repeat_commit_s": 0.00317445800465066,
+      "created": 250,
+      "updated": 225,
+      "skipped": 25,
+      "final_contacts": 1250,
+      "checks": "passed",
+      "machine_phases_s": 10.307564921982703
+    },
+    {
+      "size": 500,
+      "iteration": 2,
+      "warmup": false,
+      "fixture_sha256": "7617ca21ef16db2e1b8c76859b6d606be34b004cf19ee3f70fb5513ed6f4fbe9",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 60873,
+      "composition": {
+        "new": 250,
+        "exact_email": 150,
+        "name_organization": 50,
+        "similar_organization": 25,
+        "invalid": 25
+      },
+      "upload_s": 0.045852499999455176,
+      "mapping_s": 0.0033142080064862967,
+      "analysis_s": 8.54210504500952,
+      "candidate_types": {
+        "exact_email": 150,
+        "name_only": 168,
+        "name_organization": 50,
+        "similar_organization": 30
+      },
+      "review_rows": 229,
+      "incidental_strong_candidates": 5,
+      "incidental_weak_candidates": 168,
+      "expected_duplicate_targets_found": 225,
+      "scripted_review_s": 0.6628854169975966,
+      "commit_s": 1.8042647510010283,
+      "repeat_commit_s": 0.0040356250101467595,
+      "created": 250,
+      "updated": 225,
+      "skipped": 25,
+      "final_contacts": 1250,
+      "checks": "passed",
+      "machine_phases_s": 10.392222296010004
+    },
+    {
+      "size": 500,
+      "iteration": 3,
+      "warmup": false,
+      "fixture_sha256": "7617ca21ef16db2e1b8c76859b6d606be34b004cf19ee3f70fb5513ed6f4fbe9",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 60873,
+      "composition": {
+        "new": 250,
+        "exact_email": 150,
+        "name_organization": 50,
+        "similar_organization": 25,
+        "invalid": 25
+      },
+      "upload_s": 0.06219500000588596,
+      "mapping_s": 0.0028663329867413267,
+      "analysis_s": 8.544401211998775,
+      "candidate_types": {
+        "name_only": 168,
+        "exact_email": 150,
+        "name_organization": 50,
+        "similar_organization": 30
+      },
+      "review_rows": 229,
+      "incidental_strong_candidates": 5,
+      "incidental_weak_candidates": 168,
+      "expected_duplicate_targets_found": 225,
+      "scripted_review_s": 0.6898245009942912,
+      "commit_s": 1.7131848760036519,
+      "repeat_commit_s": 0.003302166995126754,
+      "created": 250,
+      "updated": 225,
+      "skipped": 25,
+      "final_contacts": 1250,
+      "checks": "passed",
+      "machine_phases_s": 10.319781088008313
+    },
+    {
+      "size": 500,
+      "iteration": 4,
+      "warmup": false,
+      "fixture_sha256": "7617ca21ef16db2e1b8c76859b6d606be34b004cf19ee3f70fb5513ed6f4fbe9",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 60873,
+      "composition": {
+        "new": 250,
+        "exact_email": 150,
+        "name_organization": 50,
+        "similar_organization": 25,
+        "invalid": 25
+      },
+      "upload_s": 0.054525083003682084,
+      "mapping_s": 0.0028513750003185123,
+      "analysis_s": 8.887295171007281,
+      "candidate_types": {
+        "exact_email": 150,
+        "name_only": 168,
+        "name_organization": 50,
+        "similar_organization": 30
+      },
+      "review_rows": 229,
+      "incidental_strong_candidates": 5,
+      "incidental_weak_candidates": 168,
+      "expected_duplicate_targets_found": 225,
+      "scripted_review_s": 0.6823669169971254,
+      "commit_s": 1.7345421259960858,
+      "repeat_commit_s": 0.0034432910033501685,
+      "created": 250,
+      "updated": 225,
+      "skipped": 25,
+      "final_contacts": 1250,
+      "checks": "passed",
+      "machine_phases_s": 10.676362380007049
+    },
+    {
+      "size": 500,
+      "iteration": 5,
+      "warmup": false,
+      "fixture_sha256": "7617ca21ef16db2e1b8c76859b6d606be34b004cf19ee3f70fb5513ed6f4fbe9",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 60873,
+      "composition": {
+        "new": 250,
+        "exact_email": 150,
+        "name_organization": 50,
+        "similar_organization": 25,
+        "invalid": 25
+      },
+      "upload_s": 0.06858895900950301,
+      "mapping_s": 0.003048999991733581,
+      "analysis_s": 8.62008721199527,
+      "candidate_types": {
+        "name_only": 168,
+        "exact_email": 150,
+        "name_organization": 50,
+        "similar_organization": 30
+      },
+      "review_rows": 229,
+      "incidental_strong_candidates": 5,
+      "incidental_weak_candidates": 168,
+      "expected_duplicate_targets_found": 225,
+      "scripted_review_s": 0.6876372920087306,
+      "commit_s": 1.7255459589941893,
+      "repeat_commit_s": 0.00345054198987782,
+      "created": 250,
+      "updated": 225,
+      "skipped": 25,
+      "final_contacts": 1250,
+      "checks": "passed",
+      "machine_phases_s": 10.414222129998961
+    },
+    {
+      "size": 1000,
+      "iteration": 0,
+      "warmup": true,
+      "fixture_sha256": "539375d6acf18f432bc90448761ee5f0137b1558d35d8273af027925a35d693a",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 121516,
+      "composition": {
+        "exact_email": 300,
+        "new": 500,
+        "similar_organization": 50,
+        "name_organization": 100,
+        "invalid": 50
+      },
+      "upload_s": 0.11721083300653845,
+      "mapping_s": 0.00317949999589473,
+      "analysis_s": 20.101917299994966,
+      "candidate_types": {
+        "exact_email": 300,
+        "similar_organization": 65,
+        "name_only": 360,
+        "name_organization": 100
+      },
+      "review_rows": 458,
+      "incidental_strong_candidates": 15,
+      "incidental_weak_candidates": 360,
+      "expected_duplicate_targets_found": 450,
+      "scripted_review_s": 1.356339042991749,
+      "commit_s": 3.545497668994358,
+      "repeat_commit_s": 0.003727582996361889,
+      "created": 500,
+      "updated": 450,
+      "skipped": 50,
+      "final_contacts": 1500,
+      "checks": "passed",
+      "machine_phases_s": 23.764625801995862
+    },
+    {
+      "size": 1000,
+      "iteration": 1,
+      "warmup": false,
+      "fixture_sha256": "539375d6acf18f432bc90448761ee5f0137b1558d35d8273af027925a35d693a",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 121516,
+      "composition": {
+        "exact_email": 300,
+        "new": 500,
+        "similar_organization": 50,
+        "name_organization": 100,
+        "invalid": 50
+      },
+      "upload_s": 0.2073882500117179,
+      "mapping_s": 0.004590875003486872,
+      "analysis_s": 20.415354466997087,
+      "candidate_types": {
+        "name_only": 360,
+        "exact_email": 300,
+        "similar_organization": 65,
+        "name_organization": 100
+      },
+      "review_rows": 458,
+      "incidental_strong_candidates": 15,
+      "incidental_weak_candidates": 360,
+      "expected_duplicate_targets_found": 450,
+      "scripted_review_s": 1.43610683400766,
+      "commit_s": 3.780023252009414,
+      "repeat_commit_s": 0.0036185839999234304,
+      "created": 500,
+      "updated": 450,
+      "skipped": 50,
+      "final_contacts": 1500,
+      "checks": "passed",
+      "machine_phases_s": 24.40276596901822
+    },
+    {
+      "size": 1000,
+      "iteration": 2,
+      "warmup": false,
+      "fixture_sha256": "539375d6acf18f432bc90448761ee5f0137b1558d35d8273af027925a35d693a",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 121516,
+      "composition": {
+        "exact_email": 300,
+        "new": 500,
+        "similar_organization": 50,
+        "name_organization": 100,
+        "invalid": 50
+      },
+      "upload_s": 0.19150850000733044,
+      "mapping_s": 0.003505875007249415,
+      "analysis_s": 20.517510300996946,
+      "candidate_types": {
+        "name_organization": 100,
+        "name_only": 360,
+        "exact_email": 300,
+        "similar_organization": 65
+      },
+      "review_rows": 458,
+      "incidental_strong_candidates": 15,
+      "incidental_weak_candidates": 360,
+      "expected_duplicate_targets_found": 450,
+      "scripted_review_s": 1.3851543339987984,
+      "commit_s": 3.566760168003384,
+      "repeat_commit_s": 0.005313790999935009,
+      "created": 500,
+      "updated": 450,
+      "skipped": 50,
+      "final_contacts": 1500,
+      "checks": "passed",
+      "machine_phases_s": 24.27577896900766
+    },
+    {
+      "size": 1000,
+      "iteration": 3,
+      "warmup": false,
+      "fixture_sha256": "539375d6acf18f432bc90448761ee5f0137b1558d35d8273af027925a35d693a",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 121516,
+      "composition": {
+        "exact_email": 300,
+        "new": 500,
+        "similar_organization": 50,
+        "name_organization": 100,
+        "invalid": 50
+      },
+      "upload_s": 0.37824387500586454,
+      "mapping_s": 0.003452834003837779,
+      "analysis_s": 22.282647177009494,
+      "candidate_types": {
+        "name_only": 360,
+        "exact_email": 300,
+        "similar_organization": 65,
+        "name_organization": 100
+      },
+      "review_rows": 458,
+      "incidental_strong_candidates": 15,
+      "incidental_weak_candidates": 360,
+      "expected_duplicate_targets_found": 450,
+      "scripted_review_s": 1.4148705839907052,
+      "commit_s": 3.50442966799892,
+      "repeat_commit_s": 0.003247415996156633,
+      "created": 500,
+      "updated": 450,
+      "skipped": 50,
+      "final_contacts": 1500,
+      "checks": "passed",
+      "machine_phases_s": 26.16532072001428
+    },
+    {
+      "size": 1000,
+      "iteration": 4,
+      "warmup": false,
+      "fixture_sha256": "539375d6acf18f432bc90448761ee5f0137b1558d35d8273af027925a35d693a",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 121516,
+      "composition": {
+        "exact_email": 300,
+        "new": 500,
+        "similar_organization": 50,
+        "name_organization": 100,
+        "invalid": 50
+      },
+      "upload_s": 0.1004027919989312,
+      "mapping_s": 0.0038689999928465113,
+      "analysis_s": 21.083927883999422,
+      "candidate_types": {
+        "exact_email": 300,
+        "name_only": 360,
+        "similar_organization": 65,
+        "name_organization": 100
+      },
+      "review_rows": 458,
+      "incidental_strong_candidates": 15,
+      "incidental_weak_candidates": 360,
+      "expected_duplicate_targets_found": 450,
+      "scripted_review_s": 1.614109041998745,
+      "commit_s": 4.200698084998294,
+      "repeat_commit_s": 0.005270207999274135,
+      "created": 500,
+      "updated": 450,
+      "skipped": 50,
+      "final_contacts": 1500,
+      "checks": "passed",
+      "machine_phases_s": 25.385028760996647
+    },
+    {
+      "size": 1000,
+      "iteration": 5,
+      "warmup": false,
+      "fixture_sha256": "539375d6acf18f432bc90448761ee5f0137b1558d35d8273af027925a35d693a",
+      "directory_sha256": "aeb0496089bc225de9d6d65f38c969368e739951b11dbbf5913851e70a6fe4c2",
+      "csv_bytes": 121516,
+      "composition": {
+        "exact_email": 300,
+        "new": 500,
+        "similar_organization": 50,
+        "name_organization": 100,
+        "invalid": 50
+      },
+      "upload_s": 0.2448465000052238,
+      "mapping_s": 0.0035429160052444786,
+      "analysis_s": 20.550942300003953,
+      "candidate_types": {
+        "exact_email": 300,
+        "name_organization": 100,
+        "similar_organization": 65,
+        "name_only": 360
+      },
+      "review_rows": 458,
+      "incidental_strong_candidates": 15,
+      "incidental_weak_candidates": 360,
+      "expected_duplicate_targets_found": 450,
+      "scripted_review_s": 1.3713589169929037,
+      "commit_s": 3.8030232940072892,
+      "repeat_commit_s": 0.007042832992738113,
+      "created": 500,
+      "updated": 450,
+      "skipped": 50,
+      "final_contacts": 1500,
+      "checks": "passed",
+      "machine_phases_s": 24.598812094016466
+    }
+  ],
+  "failures": [],
+  "summary": {
+    "100": {
+      "upload_s": {
+        "median": 0.011309457986499183,
+        "minimum": 0.010522915996261872,
+        "maximum": 0.018751083000097424
+      },
+      "mapping_s": {
+        "median": 0.0028448330122046173,
+        "minimum": 0.0025643749977461994,
+        "maximum": 0.003910500003257766
+      },
+      "analysis_s": {
+        "median": 1.5029379170009634,
+        "minimum": 1.4618285829928936,
+        "maximum": 1.7468309169926215
+      },
+      "scripted_review_s": {
+        "median": 0.1350523750006687,
+        "minimum": 0.12859516699973028,
+        "maximum": 0.18731350101006683
+      },
+      "commit_s": {
+        "median": 0.343490582992672,
+        "minimum": 0.3348676669993438,
+        "maximum": 0.4023335839883657
+      },
+      "repeat_commit_s": {
+        "median": 0.002999040996655822,
+        "minimum": 0.0029002079972997308,
+        "maximum": 0.004739625001093373
+      },
+      "machine_phases_s": {
+        "median": 1.8680806259799283,
+        "minimum": 1.8139574169908883,
+        "maximum": 2.159687416977249
+      }
+    },
+    "500": {
+      "upload_s": {
+        "median": 0.054525083003682084,
+        "minimum": 0.045852499999455176,
+        "maximum": 0.06858895900950301
+      },
+      "mapping_s": {
+        "median": 0.0030221669876482338,
+        "minimum": 0.0028513750003185123,
+        "maximum": 0.0033142080064862967
+      },
+      "analysis_s": {
+        "median": 8.544401211998775,
+        "minimum": 8.454497170998366,
+        "maximum": 8.887295171007281
+      },
+      "scripted_review_s": {
+        "median": 0.6876372920087306,
+        "minimum": 0.6628854169975966,
+        "maximum": 0.6960051669884706
+      },
+      "commit_s": {
+        "median": 1.7345421259960858,
+        "minimum": 1.7131848760036519,
+        "maximum": 1.8071685009927023
+      },
+      "repeat_commit_s": {
+        "median": 0.0034432910033501685,
+        "minimum": 0.00317445800465066,
+        "maximum": 0.0040356250101467595
+      },
+      "machine_phases_s": {
+        "median": 10.392222296010004,
+        "minimum": 10.307564921982703,
+        "maximum": 10.676362380007049
+      }
+    },
+    "1000": {
+      "upload_s": {
+        "median": 0.2073882500117179,
+        "minimum": 0.1004027919989312,
+        "maximum": 0.37824387500586454
+      },
+      "mapping_s": {
+        "median": 0.0035429160052444786,
+        "minimum": 0.003452834003837779,
+        "maximum": 0.004590875003486872
+      },
+      "analysis_s": {
+        "median": 20.550942300003953,
+        "minimum": 20.415354466997087,
+        "maximum": 22.282647177009494
+      },
+      "scripted_review_s": {
+        "median": 1.4148705839907052,
+        "minimum": 1.3713589169929037,
+        "maximum": 1.614109041998745
+      },
+      "commit_s": {
+        "median": 3.780023252009414,
+        "minimum": 3.50442966799892,
+        "maximum": 4.200698084998294
+      },
+      "repeat_commit_s": {
+        "median": 0.005270207999274135,
+        "minimum": 0.003247415996156633,
+        "maximum": 0.007042832992738113
+      },
+      "machine_phases_s": {
+        "median": 24.598812094016466,
+        "minimum": 24.27577896900766,
+        "maximum": 26.16532072001428
+      }
+    }
+  },
+  "finished_at": "2026-10-29T18:31:19.767414+00:00"
+}
