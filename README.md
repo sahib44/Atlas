@@ -28,8 +28,10 @@ no SMTP credentials, email provider SDKs, domain lookups, or tracking pixels.
 - [Dark mode overview](docs/screenshots/dashboard-dark.png) · [Tablet layout](docs/screenshots/tablet.png)
 - [Judge recruitment and chair review](docs/screenshots/recruitment.png) · [Recruitment in dark mode](docs/screenshots/recruitment-dark.png)
 - [Arts competition coverage](docs/screenshots/arts-coverage.png) · [Official judge slots](docs/screenshots/competition-slots.png) · [Confirmed judge directory](docs/screenshots/judge-directory.png)
-- [Campaign preview](docs/screenshots/campaign.png) · [Sandbox outbox](docs/screenshots/outbox.png) · [Competitions tickets](docs/screenshots/tickets.png)
+- [Campaign preview](docs/screenshots/campaign.png) · [Sandbox outbox](docs/screenshots/outbox.png)
+- [Tickets workspace](docs/screenshots/tickets.png) · [Tickets in dark mode](docs/screenshots/tickets-dark.png) · [Mobile ticket detail](docs/screenshots/tickets-mobile.png)
 - [Judge recruitment demo GIF](docs/screenshots/judge-recruitment.gif) · [Sandbox outreach demo GIF](docs/screenshots/sandbox-outreach.gif)
+- [Ticket reply and chair approval demo GIF](docs/screenshots/ticket-reply.gif) · [Ticket forwarding demo GIF](docs/screenshots/ticket-forward.gif)
 
 The images and demos use fabricated data in a separate local database. The
 recruitment demo follows a candidate through chair review and confirmation. The
@@ -346,8 +348,8 @@ not evidence of external deliverability.
 
 ## Verified local build
 
-The redesigned local build passed **68 backend tests, 11 frontend tests, and
-8 Playwright scenarios**, plus TypeScript compilation and Docker startup.
+The current local build passed **70 backend tests, 11 frontend tests, and
+9 Playwright scenarios**, plus TypeScript compilation and Docker startup.
 See [validation details](docs/validation.md) and the
 [requirements map](docs/requirements-matrix.md).
 
@@ -385,13 +387,12 @@ delivery require a future provider integration.
 Saved lists and the former contact-tools screen have been removed.
 
 
-Tickets form one shared competitions mailbox. There are no ticket committees,
-categories, assignees or priorities. Keep a simple conversation status, reply, add
-private team notes or forward a public message to any valid address. Forwarding
-includes only that public message and the optional forwarding note; internal notes
-are never included. Internal-note composers and saved notes use the normal surface
-with yellow outlines in both themes. The former support-staff login is retired;
-active roles are directors, technology and the competitions team.
+Tickets form one shared Competitions mailbox. The inbox shows filters, unread
+markers and previews of public email. Opening a ticket brings up its conversation,
+status controls and activity history. Public Reply and Internal Note share a
+composer with separate draft text. Private notes appear inline with a subtle
+highlight in both themes. Forwarding previews the selected public message and
+optional cover note. The ticket stays in the inbox with its current status.
 
 
 ## Ticket status and chair review
@@ -405,15 +406,14 @@ active roles are directors, technology and the competitions team.
 | Resolved | Private resolution note; a requester reply is optional and requires approval when supplied by a head | Seven days without a requester reply |
 | Closed | Reopen as In progress or Awaiting organizer to continue | Already closed |
 
-“Awaiting organizer” means the competitions team owes the next action. “Needs a
-reply” includes New, In progress and Awaiting organizer. There is no separate
-Responded status. New private notes and resolution notes appear first.
+“Awaiting organizer” means the Competitions team owes the next action. “Needs
+Reply” includes New, In progress and Awaiting organizer. Private and resolution
+notes appear in the timeline alongside public email.
 
-The reply composer and the ticket's Update status button submit the same atomic
-status/reply/note operation for the required-input statuses. Public replies required
-by Waiting on requester have red outlines and an asterisk. Resolution notes remain
-private and never enter the outgoing email. A status change cannot save without
-its required content. In progress can be selected independently of an unsent draft.
+Select a status in Details to open any required input in the composer. The
+composer saves the status and its reply or note together. A required public reply
+has a red outline and an asterisk. Resolution notes stay private. **Mark In
+Progress** updates the status independently of any unsent draft.
 
 Heads use Request chair approval at the right of the composer to submit an immutable
 reply or private-note snapshot. Only a chair or director can approve it. The chair

@@ -1,5 +1,13 @@
 # Validation record
 
+## Tickets workspace
+
+Validated locally on 2026-11-13 in Docker Desktop. The build passed 70 backend
+tests, 11 frontend tests, and 9 Playwright scenarios. The ticket checks covered
+chair approval before sending, draft restoration, forwarding privacy, and the
+same composer dimensions when switching between reply and note. Screenshots and
+both ticket demos use fabricated records from the isolated Playwright stack.
+
 ## Redesign and judge workflow
 
 Validated locally on 2026-11-12 in Docker Desktop.
