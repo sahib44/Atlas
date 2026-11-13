@@ -2,7 +2,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, func
 from .db import get_db, now
-from .models import *
+from .models import Audit, Campaign, Duplicate, ImportBatch, Outbound, Ticket
 from .auth import current_user, allowed
 from .services import serialize
 from .tickets import ticket_scope
@@ -24,27 +24,6 @@ def dashboard(user=Depends(current_user), db=Depends(get_db)):
             }
         )
 
-    if allowed(user, "judges") or allowed(user, "imports"):
-        active = select(Judge).where(Judge.merged_into_id.is_(None))
-        metric("Judge contacts", active, "/judges")
-        groups["Contacts by status"] = [
-            {"label": status, "value": count, "link": f"/judges?status={status}"}
-            for status, count in db.execute(
-                select(Judge.status, func.count())
-                .where(Judge.merged_into_id.is_(None))
-                .group_by(Judge.status)
-            )
-        ]
-        groups["Judges by category"] = [
-            {"label": name, "value": count, "link": f"/judges?category={name}"}
-            for name, count in db.execute(
-                select(Category.name, func.count())
-                .join(JudgeCategory)
-                .join(Judge)
-                .where(Judge.merged_into_id.is_(None))
-                .group_by(Category.name)
-            )
-        ]
     if allowed(user, "imports"):
         metric(
             "Duplicate reviews",

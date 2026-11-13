@@ -5,6 +5,8 @@ import zipfile
 from fastapi import APIRouter, Depends, Query, File, UploadFile, Response
 from sqlalchemy import select, func
 from .db import get_db, now
+from .assignments import lock_assignments
+from .recruitment import email_contacts, outreach_block
 from .models import *
 from .schemas import CampaignIn, ForwardIn, ObjectView, Page, Failure
 from .auth import require, current_user, allowed, fail, COMPETITIONS_ROLES
@@ -80,6 +82,7 @@ def campaigns(
 
 @router.post("/campaigns", response_model=ObjectView)
 def create(data: CampaignIn, user=Depends(require("campaigns")), db=Depends(get_db)):
+    lock_assignments(db)
     render_template(data.subject_template, {})
     render_template(data.body_template, {})
     if set(data.variables) - TEMPLATE_VARS:
@@ -92,29 +95,35 @@ def create(data: CampaignIn, user=Depends(require("campaigns")), db=Depends(get_
     judges = db.scalars(select(Judge).where(Judge.id.in_(data.judge_ids), Judge.merged_into_id.is_(None))).all()
     if len(judges) != len(set(data.judge_ids)):
         fail("invalid_recipients", "A selected judge no longer exists. Refresh the recipients.")
-    nominations = {n.judge_id: n for n in db.scalars(select(PilotNomination).where(PilotNomination.pilot_id == pilot.id))} if pilot else {}
+    if data.allow_declined_outreach and not pilot:
+        fail("competition_required", "Manual follow-up to a declined candidate requires their competition.")
+    if data.event_year and pilot and data.event_year != pilot.event_year:
+        fail("wrong_tournament", "Select the competition's tournament.")
     contacts = [(judge, judge.primary_email or judge.alternate_email, judge.display_name) for judge in judges]
     for incoming in data.recipients:
         address = contact_email(incoming.email)
         # An address already in the directory keeps its suppression and conversation history.
-        judge = db.scalar(select(Judge).where(or_(Judge.primary_email == address, Judge.alternate_email == address, Judge.preserved_emails.contains([address])), Judge.merged_into_id.is_(None)))
+        matches = list(db.scalars(email_contacts(address).limit(2)))
+        if len(matches) > 1:
+            fail("contact_conflict", "A recipient email matches multiple contacts. Resolve the duplicate before sending.", 409)
+        judge = matches[0] if matches else None
         name = clean(incoming.name).strip() or (judge.display_name if judge else address)
         if not judge and incoming.add_to_directory:
             first, _, last = name.partition(" ")
             judge = write_judge(db, {"display_name": name, "first_name": first, "last_name": last, "primary_email": address}, user, source="campaign recipient")
         contacts.append((judge, address, name))
-    campaign = Campaign(name=clean(data.name), subject_template=clean(data.subject_template), body_template=clean(data.body_template), variables=data.variables, created_by=user.id, pilot_competition_id=pilot.id if pilot else None)
+    campaign = Campaign(name=clean(data.name), subject_template=clean(data.subject_template), body_template=clean(data.body_template), variables=data.variables, created_by=user.id, pilot_competition_id=pilot.id if pilot else None, allow_declined_outreach=data.allow_declined_outreach, event_year=pilot.event_year if pilot else data.event_year)
     db.add(campaign)
     db.flush()
     excluded, seen = [], set()
     for judge, raw_address, name in contacts:
         reason = "Do not contact" if judge and judge.do_not_contact else ""
-        if judge and judge.id in nominations and nominations[judge.id].status == "declined":
-            reason = "Declined this competition"
         try:
             address = contact_email(raw_address)
         except Exception:
             address, reason = "", "Missing or invalid email"
+        if address and not reason:
+            reason = outreach_block(db, pilot, address, judge.id if judge else None, data.allow_declined_outreach, campaign.event_year)
         if address in seen:
             reason = "Duplicate normalized email"
         if reason:
@@ -124,7 +133,7 @@ def create(data: CampaignIn, user=Depends(require("campaigns")), db=Depends(get_
         values = {**data.variables, "judge_name": name, "first_name": judge.first_name if judge else name.split(" ")[0], "organization": judge.organization if judge else "", "category_name": pilot.name if pilot else ""}
         db.add(Recipient(campaign_id=campaign.id, judge_id=judge.id if judge else None, recipient_name=name, recipient_email=address, rendered_subject=render_template(data.subject_template, values), rendered_body=render_template(data.body_template, values)))
     if not seen:
-        fail("no_recipients", "Add a recipient from the directory or enter a valid email address.")
+        fail("no_recipients", "; ".join(dict.fromkeys(item["reason"] for item in excluded)) if excluded else "Choose a contact or enter a valid email address.")
     audit(db, user, "campaign.created", campaign, f"Created campaign with {len(seen)} recipients")
     db.commit()
     return {**serialize(campaign), "recipient_count": len(seen), "excluded": excluded}
@@ -222,6 +231,8 @@ def preview(
 def transition(
     id: UUID, action: str, user=Depends(require("campaigns")), db=Depends(get_db)
 ):
+    if action == "queue":
+        lock_assignments(db)
     campaign = get(db, Campaign, id, True)
     before = serialize(campaign)
     required = {"submit": "draft", "approve": "pending_approval", "queue": "approved"}
@@ -268,6 +279,7 @@ def transition(
                 now(),
             )
         elif action == "queue":
+            competition = db.get(PilotCompetition, campaign.pilot_competition_id) if campaign.pilot_competition_id else None
             for rec in db.scalars(select(Recipient).where(Recipient.campaign_id == id)):
                 judge = db.get(Judge, rec.judge_id) if rec.judge_id else None
                 if judge and (judge.do_not_contact or judge.merged_into_id):
@@ -277,6 +289,10 @@ def transition(
                     )
                     continue
                 contact_email(rec.recipient_email)
+                blocked = outreach_block(db, competition, rec.recipient_email, rec.judge_id,
+                                         campaign.allow_declined_outreach, campaign.event_year)
+                if blocked:
+                    fail("outreach_blocked", f"{rec.recipient_name}: {blocked}. Review the recipients before sending.", 409)
                 db.add(
                     Outbound(
                         recipient_email=rec.recipient_email,
@@ -382,6 +398,7 @@ def download_outbox_attachment(id: UUID, attachment_id: UUID, user=Depends(requi
 
 @router.post("/outbox/{id}/forward", response_model=ObjectView)
 def forward_message(id: UUID, data: ForwardIn, user=Depends(require("outbox")), db=Depends(get_db)):
+    lock_assignments(db)
     original = db.scalar(outbox_scope(user).where(Outbound.id == id))
     if not original or original.status != "sent":
         fail("invalid_forward", "Only sent sandbox messages can be forwarded.", 400)
@@ -390,6 +407,9 @@ def forward_message(id: UUID, data: ForwardIn, user=Depends(require("outbox")), 
         ticket = get(db, Ticket, original.related_ticket_id)
         if address == ticket.requester_email and not allowed(user, "ticket_approve"):
             fail("chair_approval_required", "Use the approved public reply flow to email this requester.", 403)
+    blocked = outreach_block(db, None, address)
+    if blocked:
+        fail("outreach_blocked", blocked, 409)
     note = clean(data.note).strip()
     subject = original.subject if original.subject.lower().startswith("fwd:") else f"Fwd: {original.subject}"
     body = f"{note}\n\n" if note else ""

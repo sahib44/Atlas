@@ -38,3 +38,20 @@ def test_retired_support_login_has_no_access(client):
     assert client.get("/api/judges").status_code == 401
     assert client.get("/api/imports").status_code == 401
     assert client.get("/api/tickets").status_code == 401
+
+
+def test_account_can_edit_its_display_name_only(client):
+    import os
+
+    assert client.patch("/api/auth/me", json={"full_name": "Group Projects Head"}).status_code == 401
+    password = os.environ["SEED_PASSWORD"]
+    login = client.post("/api/auth/login", json={"email": "competitions@example.com", "password": password})
+    assert login.status_code == 200
+    original = login.json()
+    assert client.patch("/api/auth/me", json={"full_name": " "}).status_code == 422
+    assert client.patch("/api/auth/me", json={"full_name": "Group Projects Head", "role": "director"}).status_code == 422
+    changed = client.patch("/api/auth/me", json={"full_name": "  Group Projects Head  "})
+    assert changed.status_code == 200
+    assert changed.json() == {**original, "full_name": "Group Projects Head"}
+    assert client.get("/api/auth/me").json() == changed.json()
+    assert client.post("/api/auth/login", json={"email": "chair@example.com", "password": password}).json()["full_name"] == "Competitions Chair"

@@ -32,7 +32,7 @@ export function RecipientPicker({ recipients, onChange }: { recipients: EmailRec
       {!suggestions.length && !query.isPending && <p className="caption">No matching judge. Enter a valid email address to add a recipient.</p>}
       {validEmail && !recipients.some(r => r.email.toLowerCase() === search.trim().toLowerCase()) && <div className="recipient-direct">
         <Field label="Recipient name (optional)"><input value={name} onChange={event => setName(event.target.value)} /></Field>
-        <label className="check-label"><input type="checkbox" checked={save} onChange={event => setSave(event.target.checked)} /> Add this person to judge directory</label>
+        <label className="check-label"><input type="checkbox" checked={save} onChange={event => setSave(event.target.checked)} /> Save this person as a contact</label>
         <button type="button" onClick={addEmail}>Add {search.trim()}</button>
       </div>}
       {query.error && <p role="alert">Recipient search is unavailable. Try again.</p>}

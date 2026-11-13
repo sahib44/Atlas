@@ -49,7 +49,7 @@ export function Heading({
   return (
     <div className="page-heading">
       <div>
-        <div className="eyebrow">{eyebrow || "MIST NJ / OPERATIONS"}</div>
+        {eyebrow && <div className="eyebrow">{eyebrow}</div>}
         <h1>{title}</h1>
         {description && <p>{description}</p>}
       </div>
@@ -132,21 +132,26 @@ export function Modal({
   title,
   children,
   onClose,
+  className,
+  closeLabel = "Close dialog",
 }: {
-  title: string;
+  title: ReactNode;
   children: ReactNode;
   onClose: () => void;
+  className?: string;
+  closeLabel?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   useEffect(() => {
     ref.current?.showModal();
     return () => ref.current?.close();
   }, []);
   return (
-    <dialog ref={ref} onCancel={onClose}>
+    <dialog ref={ref} className={className} onCancel={onClose} aria-labelledby={titleId}>
       <header>
-        <h2>{title}</h2>
-        <button onClick={onClose} aria-label="Close dialog">
+        <h2 id={titleId}>{title}</h2>
+        <button type="button" onClick={onClose} aria-label={closeLabel}>
           <X size={18} />
         </button>
       </header>

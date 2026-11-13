@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { FileText, Mail, Plus, Trash2, Upload, Users } from "lucide-react";
 import { useAction, useData, Page, Row, can, date } from "./api";
 import { useUser } from "./App";
 import { UnreadMarker } from "./Inbox";
 import { Back, Empty, ErrorBox, Field, Heading, Loading, Modal, Pagination, Panel } from "./ui";
+import { Coverage, JudgeCoverage, TournamentSelector, tournamentPath, useTournament } from "./CompetitionCoverage";
+import { AssignmentCandidate, OfficialJudgeSlots, OfficialSlot } from "./OfficialJudgeSlots";
 
 const stages = [
   ["", "All judges"],
@@ -14,21 +16,27 @@ const stages = [
   ["declined", "Declined"],
 ] as const;
 
-type Category = { slug: string; name: string; competition_count: number; unread_count: number };
+type Category = Coverage & { slug: string; name: string; competition_count: number; unread_count: number };
+type CompetitionDetail = Row & Coverage & { event_year: number; official_assignments: OfficialSlot[] };
 
 export function Competitions() {
-  const categories = useData<Category[]>("/competitions/categories");
+  const tournament = useTournament();
+  const categories = useData<Category[]>(tournamentPath("/competitions/categories", tournament.year), !tournament.isPending && !tournament.error);
   const user = useUser();
   return <>
-    <Heading eyebrow="JUDGE HANDLING" title="Competitions">{(can(user, "judges") || can(user, "audit")) && <Link className="button" to="/competitions/deletions">Deleted pilots</Link>}</Heading>
-    <ErrorBox error={categories.error} />
-    {categories.isPending ? <Loading /> : <div className="pilot-grid">
-      {categories.data?.map((category) => <Link className="pilot-card" to={`/competitions/${category.slug}`} key={category.slug}>
+    <Heading eyebrow="JUDGE HANDLING" title="Competitions">
+      <TournamentSelector tournament={tournament} />
+      {(can(user, "judges") || can(user, "audit")) && <Link className="button" to="/competitions/deletions">Deleted pilots</Link>}
+    </Heading>
+    <ErrorBox error={tournament.error || categories.error} />
+    {!tournament.error && (categories.isPending ? <Loading /> : <div className="pilot-grid">
+      {categories.data?.map((category) => <Link className="pilot-card" to={tournamentPath(`/competitions/${category.slug}`, tournament.year)} key={category.slug}>
         <span className="pilot-card-icon"><Users size={20} /></span>
         <strong>{category.name} <UnreadMarker count={category.unread_count} /></strong>
-        <small>{category.competition_count} competitions</small>
+        <JudgeCoverage name={category.name} confirmed_count={category.confirmed_count} required_count={category.required_count} />
+        <small>{category.competition_count} active {category.competition_count === 1 ? "competition" : "competitions"}</small>
       </Link>)}
-    </div>}
+    </div>)}
   </>;
 }
 
@@ -47,36 +55,47 @@ export function DeletedCompetitions() {
 
 export function CompetitionCategory() {
   const { category = "" } = useParams();
-  const categories = useData<Category[]>("/competitions/categories");
+  const tournament = useTournament();
+  const [params, setParams] = useSearchParams();
+  const pageNumber = Math.max(1, Math.floor(Number(params.get("page")) || 1));
+  const categories = useData<Category[]>(tournamentPath("/competitions/categories", tournament.year), !tournament.isPending && !tournament.error);
   const categoryName = categories.data?.find((item) => item.slug === category)?.name || "Competitions";
-  const query = useData<Page>(`/competitions?category_slug=${encodeURIComponent(category)}&page_size=100`);
-  const existing = useData<Page>("/judges?page_size=100");
+  const scope = new URLSearchParams({ category_slug: category, page: String(pageNumber) });
+  if (tournament.year !== null) scope.set("event_year", String(tournament.year));
+  const query = useData<Page>(`/competitions?${scope}`, !tournament.isPending && !tournament.error);
   const action = useAction();
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [chosen, setChosen] = useState<string[]>([]);
+  const existing = useData<Page>("/judges?page_size=100", creating);
   return (
     <>
-      <Back to="/competitions">Competitions</Back>
+      <Back to={tournamentPath("/competitions", tournament.year)}>Competitions</Back>
       <Heading eyebrow="COMPETITIONS" title={categoryName}>
-        <button className="primary" onClick={() => setCreating(true)}>
+        <TournamentSelector tournament={tournament} />
+        <button className="primary" onClick={() => { setChosen([]); setCreating(true); }}>
           <Plus size={16} /> Add pilot competition
         </button>
       </Heading>
-      <ErrorBox error={query.error} />
-      {query.isPending ? <Loading /> : query.data?.items.length ? (
+      <ErrorBox error={tournament.error || query.error} />
+      {!tournament.error && (query.isPending ? <Loading /> : query.data?.items.length ? (
         <div className="pilot-grid">
           {query.data.items.map((pilot) => (
             <Link className="pilot-card" to={`/competitions/${category}/${pilot.id}`} key={pilot.id}>
               <span className="pilot-card-icon"><Users size={20} /></span>
               {pilot.is_pilot && <span className="pilot-card-year">PILOT · {pilot.event_year}</span>}
               <strong>{pilot.name} <UnreadMarker count={pilot.unread_count} /></strong>
-              <span>{Object.values(pilot.counts || {}).reduce((sum: number, n: any) => sum + Number(n), 0)} judges</span>
-              <small>{pilot.documents?.length || 0} documents</small>
+              <JudgeCoverage name={pilot.name} confirmed_count={pilot.confirmed_count} required_count={pilot.required_count} />
+              <small>{Object.values(pilot.counts || {}).reduce((sum: number, count) => sum + Number(count), 0)} recruitment records · {pilot.documents?.length || 0} documents</small>
             </Link>
           ))}
         </div>
-      ) : <Empty>No competitions in this category yet.</Empty>}
+      ) : query.data && <Empty>No active competitions in this category for {tournament.year ?? "this tournament"}.</Empty>)}
+      <Pagination data={query.data} onPage={number => {
+        const next = new URLSearchParams(params);
+        next.set("page", String(number));
+        setParams(next);
+      }} />
       {creating && (
         <Modal title="Add pilot competition" onClose={() => setCreating(false)}>
           <form onSubmit={async (event) => {
@@ -115,9 +134,13 @@ export function CompetitionCategory() {
 }
 
 export function PilotDetail() {
-  const user = useUser();
   const { id = "" } = useParams();
-  const pilot = useData<Row>(`/competitions/${id}`);
+  return <PilotWorkspace id={id} key={id} />;
+}
+
+function PilotWorkspace({ id }: { id: string }) {
+  const user = useUser();
+  const pilot = useData<CompetitionDetail>(`/competitions/${id}`);
   const action = useAction();
   const navigate = useNavigate();
   const [status, setStatus] = useState("");
@@ -125,15 +148,12 @@ export function PilotDetail() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
-  const [adding, setAdding] = useState(false);
-  const [existingMode, setExistingMode] = useState(false);
-  const [existingSearch, setExistingSearch] = useState("");
-  const [existingId, setExistingId] = useState("");
+  const [declineDraft, setDeclineDraft] = useState<string | null>(null);
+  const [candidate, setCandidate] = useState<AssignmentCandidate | null>(null);
   const [documentKind, setDocumentKind] = useState("");
   const [deleteStep, setDeleteStep] = useState(0);
   const [deleteName, setDeleteName] = useState("");
   const [localError, setLocalError] = useState<unknown>();
-  const existing = useData<Page>(`/judges?page_size=25&q=${encodeURIComponent(existingSearch)}`, adding && existingMode);
   const params = new URLSearchParams({ page: String(page), page_size: "100" });
   if (status) params.set("status", status);
   if (overdue) params.set("overdue_days", "7");
@@ -142,20 +162,34 @@ export function PilotDetail() {
   if (pilot.isPending) return <Loading />;
   if (!pilot.data) return <ErrorBox error={pilot.error} />;
   const details = pilot.data;
+  const canManage = can(user, "judge_assign");
+  const active = details.activation_status === "active";
   const documents = Object.fromEntries((details.documents || []).map((doc: Row) => [doc.kind, doc]));
   const visible = nominations.data?.items || [];
   const selectedJudges = visible.filter((nomination) => selected.includes(nomination.id));
-  const mailReady = selectedJudges.filter((nomination) => nomination.judge.primary_email && !nomination.judge.do_not_contact && nomination.status !== "declined");
+  const mailReady = selectedJudges.filter((nomination) => nomination.judge.primary_email && !nomination.judge.do_not_contact && nomination.status !== "declined" && (!nomination.review_status || nomination.review_status === "approved"));
   function changeFilter(nextStatus: string, nextOverdue: boolean) {
-    setStatus(nextStatus); setOverdue(nextOverdue); setPage(1); setSelected([]);
+    setStatus(nextStatus); setOverdue(nextOverdue); setPage(1); setSelected([]); setDeclineDraft(null);
+  }
+  async function saveResponse(nominationId: string, nextStatus: string) {
+    setSelected(current => current.filter(selectedId => selectedId !== nominationId));
+    try {
+      await action.mutateAsync({ path: `/competitions/${id}/judges/${nominationId}`, method: "PATCH", body: { status: nextStatus } });
+      setDeclineDraft(null);
+    } catch {}
   }
   return (
     <>
-      <Back to={`/competitions/${details.category_slug}`}>Competitions</Back>
+      <Back to={tournamentPath(`/competitions/${details.category_slug}`, details.event_year)}>Competitions</Back>
       <Heading eyebrow={details.is_pilot ? `PILOT · ${details.event_year}` : `COMPETITION · ${details.event_year}`} title={details.name}>
-        <button className="primary" onClick={() => setAdding(true)}><Plus size={16} /> Add judge</button>
+        {active && <Link className="button primary" to={`/recruitment?event_year=${details.event_year}&competition_id=${id}&add=1`}><Plus size={16} /> Add judge</Link>}
         {details.is_pilot && can(user, "delete") && <button className="pilot-delete" onClick={() => setDeleteStep(1)}><Trash2 size={16} /> Delete pilot</button>}
       </Heading>
+      <OfficialJudgeSlots
+        competitionId={id} competitionName={details.name} active={active}
+        assignments={details.official_assignments} coverage={details}
+        canManage={canManage} candidate={candidate} onCloseCandidate={() => setCandidate(null)}
+      />
       <div className="pilot-summary">
         <button onClick={() => changeFilter("", false)} className={!status && !overdue ? "active" : ""}><strong>{Object.values(details.counts || {}).reduce((sum: number, n: any) => sum + Number(n), 0)}</strong><span>All judges</span></button>
         {stages.slice(1).map(([key, title]) => <button key={key} onClick={() => changeFilter(status === key && !overdue ? "" : key, false)} className={status === key && !overdue ? "active" : ""}><strong>{details.counts?.[key] || 0}</strong><span>{title}</span></button>)}
@@ -176,7 +210,7 @@ export function PilotDetail() {
       <Panel title="Judges" action={<span className="caption">{nominations.data?.total ?? 0} in this view</span>}>
         <div className="pilot-filters">
           <Field label="Response status"><select value={status} onChange={(e) => changeFilter(e.target.value, false)}>{stages.map(([key, title]) => <option value={key} key={key}>{title}</option>)}</select></Field>
-          <Field label="Search judges"><input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); setSelected([]); }} placeholder="Name or email" /></Field>
+          <Field label="Search judges"><input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); setSelected([]); setDeclineDraft(null); }} placeholder="Name or email" /></Field>
           <label className="pilot-overdue"><input type="checkbox" checked={overdue} onChange={(e) => changeFilter(e.target.checked ? "awaiting_response" : "", e.target.checked)} /> Waiting 7+ days</label>
         </div>
         <p className="caption">A completed sandbox message moves a judge from To contact to Awaiting response. No external email is sent.</p>
@@ -195,44 +229,44 @@ export function PilotDetail() {
                   <Link to={`/campaigns/conversations/judges/${nomination.judge.id}`}><strong>{nomination.judge.display_name}</strong></Link> <UnreadMarker count={nomination.unread_count} />
                   <small>{nomination.judge.primary_email || "No email"}{nomination.judge.phone ? ` · ${nomination.judge.phone}` : ""}</small>
                   {(nomination.qualification_text || !!nomination.judge.qualifications?.length) && <p className="caption">{nomination.qualification_text || nomination.judge.qualifications.join("; ")}</p>}
-                  {nomination.last_contacted_at && <small>Awaiting since {date(nomination.last_contacted_at)}</small>}
+                  {nomination.status === "awaiting_response" && nomination.last_contacted_at && <small>Awaiting since {date(nomination.last_contacted_at)}</small>}
+                  {nomination.official_assignment && <small className="official-assignment-summary">
+                    {nomination.official_assignment.competition_id === id
+                      ? `Official slot ${nomination.official_assignment.slot_number}`
+                      : `Official slot in ${nomination.official_assignment.competition_name}`}
+                  </small>}
                 </div>
-                <Field label="Response"><select value={nomination.status} onChange={(e) => { setSelected((current) => current.filter((selectedId) => selectedId !== nomination.id)); action.mutate({ path: `/competitions/${id}/judges/${nomination.id}`, method: "PATCH", body: { status: e.target.value } }); }}>{stages.slice(1).map(([key, title]) => <option key={key} value={key}>{title}</option>)}</select></Field>
+                <div className="nomination-controls">
+                  <Field label="Response">
+                    <select
+                      value={declineDraft === nomination.id ? "declined" : nomination.status}
+                      disabled={action.isPending || ["pending", "rejected"].includes(nomination.review_status) || (nomination.status === "declined" && !!nomination.review_status)}
+                      onChange={(e) => {
+                        const nextStatus = e.target.value;
+                        setDeclineDraft(nextStatus === "declined" ? nomination.id : null);
+                        if (nextStatus !== "declined" && nextStatus !== nomination.status) void saveResponse(nomination.id, nextStatus);
+                      }}
+                    >
+                      {stages.slice(1).map(([key, title]) => <option key={key} value={key}>{title}</option>)}
+                    </select>
+                  </Field>
+                  {declineDraft === nomination.id && nomination.status !== "declined" && <div className="actions">
+                    <button type="button" disabled={action.isPending} onClick={() => setDeclineDraft(null)}>Cancel</button>
+                    <button type="button" disabled={action.isPending} onClick={() => saveResponse(nomination.id, "declined")}>Save decline</button>
+                  </div>}
+                  {nomination.review_status && <Link to={`/recruitment?event_year=${details.event_year}&candidate=${nomination.id}`}>View recruitment request</Link>}
+                  {declineDraft !== nomination.id && canManage && active && details.confirmed_count < details.required_count && nomination.status === "accepted" && nomination.judge.is_active_contact && (!nomination.review_status || nomination.review_status === "approved") && (
+                    <button type="button" onClick={() => setCandidate({ nominationId: nomination.id, judgeName: nomination.judge.display_name, current: nomination.official_assignment })}>
+                      {nomination.official_assignment ? "Reassign judge" : "Confirm assignment"}
+                    </button>
+                  )}
+                </div>
               </article>
             ))}
-            <Pagination data={nominations.data} onPage={(next) => { setPage(next); setSelected([]); }} />
+            <Pagination data={nominations.data} onPage={(next) => { setPage(next); setSelected([]); setDeclineDraft(null); }} />
           </div>
         ) : <Empty>No judges match this view.</Empty>}
       </Panel>
-      {adding && <Modal title="Add judge to competition" onClose={() => { setAdding(false); setExistingMode(false); }}>
-        <form onSubmit={async (event) => {
-          event.preventDefault();
-          const fd = new FormData(event.currentTarget);
-          try {
-            await action.mutateAsync({ path: `/competitions/${id}/judges`, body: {
-              name: existingMode ? "Existing judge" : fd.get("name"),
-              email: existingMode ? "" : fd.get("email"),
-              phone: existingMode ? "" : fd.get("phone"),
-              qualifications: existingMode ? "" : fd.get("qualifications"),
-              existing_judge_id: existingMode ? existingId : null,
-            }});
-            setAdding(false); setExistingMode(false); setExistingId("");
-          } catch {}
-        }}>
-          <div className="tabs"><button type="button" className={!existingMode ? "active" : ""} onClick={() => setExistingMode(false)}>New judge</button><button type="button" className={existingMode ? "active" : ""} onClick={() => setExistingMode(true)}>Existing contact</button></div>
-          {existingMode ? <>
-            <Field label="Search directory"><input value={existingSearch} onChange={(e) => setExistingSearch(e.target.value)} placeholder="Name or email" /></Field>
-            <Field label="Judge contact"><select required value={existingId} onChange={(e) => setExistingId(e.target.value)}><option value="">Choose a contact</option>{existing.data?.items.map((judge) => <option key={judge.id} value={judge.id}>{judge.display_name} · {judge.primary_email || judge.phone}</option>)}</select></Field>
-          </> : <>
-            <Field label="Name"><input name="name" required maxLength={400} /></Field>
-            <div className="form-grid"><Field label="Email"><input name="email" type="email" maxLength={254} /></Field><Field label="Phone"><input name="phone" type="tel" maxLength={50} /></Field></div>
-            <p className="caption">At least one contact method is required. Email is required to create a sandbox message.</p>
-            <Field label="Why this judge is qualified (optional)"><textarea name="qualifications" rows={3} maxLength={2000} /></Field>
-          </>}
-          <ErrorBox error={action.error} />
-          <div className="form-footer"><button type="button" onClick={() => setAdding(false)}>Cancel</button><button className="primary" disabled={action.isPending || (existingMode && !existingId)}>Add judge</button></div>
-        </form>
-      </Modal>}
       {documentKind && <Modal title={`Upload ${documentKind}`} onClose={() => setDocumentKind("")}>
         <form onSubmit={async (event) => {
           event.preventDefault();
@@ -247,7 +281,7 @@ export function PilotDetail() {
       {deleteStep > 0 && <Modal title="Delete pilot competition" onClose={() => { setDeleteStep(0); setDeleteName(""); }}>
         {deleteStep === 1 && <><p>Are you sure you want to delete <strong>{details.name}</strong>?</p><div className="form-footer"><button onClick={() => setDeleteStep(0)}>Cancel</button><button className="pilot-delete" onClick={() => setDeleteStep(2)}>Yes, continue</button></div></>}
         {deleteStep === 2 && <><p>Are you really sure? This pilot will disappear from competition lists. Its deletion remains in the audit trail.</p><div className="form-footer"><button onClick={() => setDeleteStep(0)}>Cancel</button><button className="pilot-delete" onClick={() => setDeleteStep(3)}>Continue to final confirmation</button></div></>}
-        {deleteStep === 3 && <form onSubmit={async (event) => { event.preventDefault(); try { await action.mutateAsync({ path: `/competitions/${id}`, method: "DELETE", body: { confirmed_first: true, confirmed_second: true, exact_name: deleteName } }); navigate(`/competitions/${details.category_slug}`); } catch {} }}>
+        {deleteStep === 3 && <form onSubmit={async (event) => { event.preventDefault(); try { await action.mutateAsync({ path: `/competitions/${id}`, method: "DELETE", body: { confirmed_first: true, confirmed_second: true, exact_name: deleteName } }); navigate(tournamentPath(`/competitions/${details.category_slug}`, details.event_year)); } catch {} }}>
           <p>Type <strong>{details.name}</strong> exactly to delete this pilot.</p>
           <Field label="Competition name"><input value={deleteName} onChange={(event) => setDeleteName(event.target.value)} autoComplete="off" required /></Field>
           <ErrorBox error={action.error} />

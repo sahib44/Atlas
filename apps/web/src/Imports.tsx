@@ -72,7 +72,6 @@ export function Imports() {
     <>
       <Heading
         title="Imports"
-        description="Bring historical judge records into one shared directory."
       >
         <Link className="button primary" to="/imports/new">
           <Upload size={16} /> Import CSV
@@ -165,7 +164,6 @@ export function ImportWizard() {
         title={
           status === "committed" ? "Import complete" : "Import judge records"
         }
-        description="Upload, map, review, then bring verified records into your directory."
       />
       <ImportSteps step={step} />
       <ErrorBox error={error || batch.error} />
@@ -372,9 +370,6 @@ export function ImportWizard() {
             decisions are preserved in the audit trail.
           </p>
           <div className="actions">
-            <Link className="button primary" to="/judges">
-              View judge directory
-            </Link>
             <a className="button" href={"/api/imports/" + id + "/errors"}>
               Download error CSV
             </a>
@@ -421,7 +416,6 @@ export function Duplicates() {
     <>
       <Heading
         title="Duplicate review"
-        description="Review the evidence. Choose what belongs together."
       />
       {params.get("batch_id") && (
         <Back to={"/imports/" + params.get("batch_id")}>Return to import</Back>

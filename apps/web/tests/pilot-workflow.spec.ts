@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { addApprovedNomination } from "./recruitment-helpers";
 
 test("pilot folder tracks judge responses and creates separate sandbox messages", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
@@ -23,13 +24,9 @@ test("pilot folder tracks judge responses and creates separate sandbox messages"
   await expect(page.getByText("No rules uploaded yet.")).toBeVisible();
   await expect(page.getByText("No procedures uploaded yet.")).toBeVisible();
 
+  const competitionId = page.url().split("/").at(-1)!;
   for (const number of [1, 2, 3]) {
-    await page.getByRole("button", { name: "Add judge" }).click();
-    await page.getByLabel("Name", { exact: true }).fill(`Pilot Judge ${number}`);
-    await page.getByLabel("Email", { exact: true }).fill(`pilot-judge-${number}@example.edu`);
-    await page.getByLabel("Why this judge is qualified (optional)").fill("Experienced with software and engineering projects.");
-    await page.getByRole("dialog").getByRole("button", { name: "Add judge" }).click();
-    await expect(page.getByRole("dialog")).not.toBeVisible();
+    await addApprovedNomination(page, competitionId, `Pilot Judge ${number}`, `pilot-judge-${number}@example.edu`);
   }
   for (const number of [1, 2]) {
     const card = page.locator(".pilot-judge").filter({ hasText: `Pilot Judge ${number}` });
@@ -51,6 +48,8 @@ test("pilot folder tracks judge responses and creates separate sandbox messages"
   }
   await page.getByLabel("Campaign name").fill("Pilot judge update");
   await page.getByLabel("Attachments (optional; up to five files, 5 MB each)").setInputFiles({ name: "instructions.txt", mimeType: "text/plain", buffer: Buffer.from("Sample judging instructions") });
+  await page.getByLabel("Subject", { exact: true }).fill("Invitation to judge");
+  await page.getByLabel("Email body").fill("Hello {{first_name}}, please join us as a judge.");
   await page.getByRole("button", { name: "Create draft & preview" }).click();
   await expect(page.getByRole("heading", { name: "Pilot judge update" })).toBeVisible();
   await expect(page.getByRole("link", { name: "instructions.txt" })).toBeVisible();
@@ -76,10 +75,28 @@ test("pilot folder tracks judge responses and creates separate sandbox messages"
   await page.getByRole("button", { name: "Queue sandbox forward" }).click();
   await expect(page.getByRole("status")).toContainText("Forward queued");
   await page.goto("/judges");
-  await page.getByLabel("Main category").selectOption("arts");
-  await page.getByLabel("Response", { exact: true }).selectOption("accepted");
-  await expect(page.getByRole("row").filter({ hasText: title })).toHaveCount(3);
-  await expect(page.getByRole("button", { name: "Export sheet" })).toBeVisible();
+  await page.getByRole("combobox", { name: "Competition", exact: true }).selectOption(competitionId);
+  await expect(page.getByText("No confirmed judges match these filters.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Export CSV" })).toBeVisible();
+
+  await page.goto(`/competitions/arts/${competitionId}`);
+  await page.getByLabel("Response status").selectOption("accepted");
+  const judge = page.locator(".pilot-judge").filter({ hasText: "Pilot Judge 1" });
+  const judgeResponse = judge.getByLabel("Response", { exact: true });
+  await judgeResponse.selectOption("awaiting_response");
+  await expect(judge).toHaveCount(0);
+  await page.getByLabel("Response status").selectOption("awaiting_response");
+  await expect(judge.getByText(/Awaiting since/)).toBeVisible();
+  await judgeResponse.selectOption("declined");
+  await expect(judge.getByRole("button", { name: "Save decline" })).toBeVisible();
+  await judge.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(judgeResponse).toHaveValue("awaiting_response");
+  await judgeResponse.selectOption("declined");
+  await judge.getByRole("button", { name: "Save decline" }).click();
+  await expect(judge).toHaveCount(0);
+  await page.getByLabel("Response status").selectOption("declined");
+  await expect(judgeResponse).toBeDisabled();
+  await expect(judge.getByText(/Awaiting since/)).toHaveCount(0);
 });
 
 test("permanent competition cannot be deleted and pilot deletion has three steps", async ({ page }) => {

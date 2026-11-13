@@ -15,6 +15,10 @@ export function Notifications() {
   return <>
     <button className="notification-button" onClick={() => setOpen(true)} aria-label={`Notifications (${query.data?.unread_count || 0} unread)`}><Bell size={18} /> Notifications{(query.data?.unread_count || 0) > 0 && <span className="notification-count">{query.data?.unread_count}</span>}</button>
     {open && <Modal title="Notifications" onClose={() => setOpen(false)}><ErrorBox error={query.error || action.error} />
+      <div className="notification-actions">
+        <button type="button" disabled={!query.data?.unread_count || action.isPending}
+          onClick={() => action.mutate({ path: "/notifications/read-all" })}>Mark all as read</button>
+      </div>
       {query.isPending ? <Loading /> : !query.data?.items.length ? <Empty>No notifications yet.</Empty> : <div className="notification-list">{query.data.items.map(item => <button className={!item.read_at ? "notification-item unread" : "notification-item"} key={item.id} onClick={async () => {
         try { await action.mutateAsync({ path: `/notifications/${item.id}/read` }); setOpen(false); navigate(item.href); } catch {}
       }}><strong>{item.title}</strong><span>{item.body}</span><small>{date(item.created_at)}{!item.read_at ? " · Unread" : ""}</small></button>)}</div>}

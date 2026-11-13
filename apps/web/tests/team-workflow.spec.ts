@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
+import { addApprovedNomination, writeJson } from "./recruitment-helpers";
 
-test("shared heads receive judge alerts and chair clears judges only after backup and password", async ({ page }) => {
+test("shared heads receive judge alerts and chair clears judges only after backup and password", async ({ page, playwright, baseURL }) => {
   page.on("dialog", dialog => dialog.accept());
   const password = process.env.SEED_PASSWORD;
   if (!password) throw new Error("SEED_PASSWORD is required");
@@ -21,13 +22,13 @@ test("shared heads receive judge alerts and chair clears judges only after backu
   await page.locator(".pilot-card").filter({ hasText: "Brother's Improv" }).click();
   const competitionUrl = page.url();
   await expect(page.getByRole("button", { name: "Delete pilot" })).toHaveCount(0);
-  for (const [name, email] of [["Inbox First Judge", "inbox-first@example.org"], ["Inbox Second Judge", "inbox-second@example.org"]]) {
-    await page.getByRole("button", { name: "Add judge", exact: true }).click();
-    await page.getByLabel("Name", { exact: true }).fill(name);
-    await page.getByLabel("Email", { exact: true }).fill(email);
-    await page.getByRole("dialog").getByRole("button", { name: "Add judge", exact: true }).click();
-    await expect(page.getByRole("dialog")).toHaveCount(0);
-  }
+  const approver = await playwright.request.newContext({ baseURL });
+  try {
+    await writeJson(approver, "/auth/login", { email: "chair@example.com", password });
+    for (const [name, email] of [["Inbox First Judge", "inbox-first@example.org"], ["Inbox Second Judge", "inbox-second@example.org"]]) {
+      await addApprovedNomination(page, competitionUrl.split("/").at(-1)!, name, email, approver);
+    }
+  } finally { await approver.dispose(); }
   await page.getByLabel("Select visible judges").check();
   await page.getByRole("button", { name: "Email selected (2)" }).click();
   await expect(page.getByRole("button", { name: "Remove Inbox First Judge", exact: true })).toBeVisible();
@@ -36,10 +37,12 @@ test("shared heads receive judge alerts and chair clears judges only after backu
   await page.locator(".recipient-options").getByRole("button", { name: /Inbox Second Judge/ }).click();
   await page.getByLabel("Find or add a recipient").fill("registration-extra@example.org");
   await page.getByLabel("Recipient name (optional)").fill("Registration Team");
-  await expect(page.getByLabel("Add this person to judge directory")).not.toBeChecked();
+  await expect(page.getByLabel("Save this person as a contact")).not.toBeChecked();
   await page.getByRole("button", { name: "Add registration-extra@example.org", exact: true }).click();
   await expect(page.getByRole("button", { name: "Remove Registration Team", exact: true })).toBeVisible();
   await page.getByLabel("Campaign name", { exact: true }).fill("Inbox workflow campaign");
+  await page.getByLabel("Subject", { exact: true }).fill("Invitation to judge");
+  await page.getByLabel("Email body").fill("Hello {{first_name}}, please join us as a judge.");
   await page.getByRole("button", { name: "Create draft & preview" }).click();
   await expect(page.getByRole("heading", { name: "Inbox workflow campaign" })).toBeVisible();
   await page.getByRole("button", { name: "Submit for approval" }).click();
@@ -79,12 +82,34 @@ test("shared heads receive judge alerts and chair clears judges only after backu
   await page.getByRole("button", { name: "Receive sandbox email" }).click();
   await expect(page.getByRole("heading", { name: "General competitions question", exact: true })).toBeVisible();
   await page.goto("/dashboard");
-  await page.locator(".page-heading").getByRole("button", { name: /Notifications/ }).click();
+  const sidebar = page.locator(".sidebar");
+  const sidebarGeometry = () => sidebar.evaluate(node => {
+    const bounds = (element: Element) => {
+      const { x, y, width, height } = element.getBoundingClientRect();
+      return { x, y, width, height };
+    };
+    return [node, ...node.querySelectorAll(".brand, .nav-group a, .workspace-account")].map(bounds);
+  });
+  for (const width of [1440, 1024]) {
+    await page.setViewportSize({ width, height: 900 });
+    const overviewGeometry = await sidebarGeometry();
+    for (const [label, path] of [["Judge Recruitment", "/recruitment"], ["Judge Directory", "/judges"], ["Overview", "/dashboard"]]) {
+      await sidebar.getByRole("link", { name: label, exact: true }).click();
+      await expect(page).toHaveURL(path);
+      expect(await sidebarGeometry()).toEqual(overviewGeometry);
+    }
+  }
+  await page.locator(".topbar").getByRole("button", { name: /Notifications/ }).click();
   await expect(page.getByRole("dialog")).toContainText("Ticket email: A New Sender");
+  const markRead = page.getByRole("button", { name: "Mark all as read" });
+  await markRead.click();
+  await expect(markRead).toBeDisabled();
+  await expect(page.locator(".notification-item.unread")).toHaveCount(0);
   await page.getByRole("button", { name: "Close dialog" }).click();
   await logout();
   await login("chair@example.com");
   await page.goto("/judges");
+  await page.getByRole("button", { name: "More filters", exact: true }).click();
   await page.getByRole("button", { name: "Clear all judges", exact: true }).click();
   await page.getByRole("button", { name: "Yes, continue", exact: true }).click();
   const download = page.waitForEvent("download");
@@ -96,7 +121,7 @@ test("shared heads receive judge alerts and chair clears judges only after backu
   await page.getByLabel("Chair or director password").fill(password);
   await page.getByRole("dialog").getByRole("button", { name: "Clear all judges", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.getByText("No judges match these filters.")).toBeVisible();
+  await expect(page.getByText("No confirmed judges match these filters.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Download the saved backup" })).toBeVisible();
   await page.screenshot({ path: "test-results/chair-clear-directory.png", fullPage: true });
 });

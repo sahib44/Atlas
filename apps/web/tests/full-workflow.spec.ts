@@ -20,16 +20,21 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
     ).toBeVisible();
   };
   await login("competitions@example.com");
-  await expect(page.getByRole("navigation", { name: "Judge handling" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Competitions tickets" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Workspace" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Operations" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Notifications/ })).toHaveCount(1);
+  await expect.poll(() => page.locator(".sidebar .brand-symbol").evaluate((logo: HTMLImageElement) => logo.naturalWidth)).toBeGreaterThan(0);
   await page.getByRole("button", { name: "Switch to dark mode" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.getByRole("button", { name: "Switch to light mode" }).click();
-  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  const sidebarLogo = page.locator(".sidebar button.brand");
+  await expect(sidebarLogo.locator("img")).toBeVisible();
+  await sidebarLogo.click();
   await expect(page.locator(".app")).toHaveClass(/sidebar-collapsed/);
-  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  await expect(sidebarLogo).toHaveAccessibleName("Expand sidebar");
+  await sidebarLogo.press("Enter");
   await expect(page.locator(".app")).not.toHaveClass(/sidebar-collapsed/);
   await expect(
     page.getByText("SANDBOX EMAIL MODE", { exact: true }),
@@ -96,9 +101,18 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await expect(
     page.getByRole("heading", { name: "Import complete" }),
   ).toBeVisible();
-  await page.goto("/judges");
-  await page.getByLabel("Select visible judges").check();
-  await page.getByRole("button", { name: "Email selected", exact: true }).click();
+  await expect(page.getByRole("link", { name: "View judge directory" })).toHaveCount(0);
+  const contactPage = await page.request.get("/api/judges?page_size=100");
+  expect(contactPage.ok()).toBe(true);
+  const contacts = (await contactPage.json()).items;
+  const eligible = contacts.filter((contact: any) => contact.primary_email && !contact.do_not_contact).slice(0, 3);
+  const suppressed = contacts.find((contact: any) => contact.primary_email && contact.do_not_contact);
+  expect(eligible.length).toBeGreaterThan(0);
+  await page.goto("/campaigns/new");
+  for (const contact of [...eligible, ...(suppressed ? [suppressed] : [])]) {
+    await page.getByLabel("Find or add a recipient").fill(contact.primary_email);
+    await page.getByRole("button", { name: `Add ${contact.primary_email}`, exact: true }).click();
+  }
   await expect(page.getByLabel("Selected recipients")).not.toBeEmpty();
   await page
     .getByLabel("Campaign name", { exact: true })
@@ -107,9 +121,13 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await page
     .getByLabel("Response deadline", { exact: true })
     .fill(dateFromNow(14));
+  await page.getByLabel("Subject", { exact: true }).fill("Invitation to judge");
+  await page.getByLabel("Email body").fill("Hello {{first_name}}, please join us as a judge.");
   await page.getByRole("button", { name: "Create draft & preview" }).click();
-  await expect(page.getByRole("heading", { name: "Review recipient exclusions", exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "Continue to preview", exact: true }).click();
+  if (suppressed) {
+    await expect(page.getByRole("heading", { name: "Review recipient exclusions", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Continue to preview", exact: true }).click();
+  }
   await expect(
     page.getByRole("heading", { name: "Arts invitation " + stamp }),
   ).toBeVisible();
@@ -132,6 +150,11 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
     ).not.toContainText("{{");
   }
   await page.getByRole("button", { name: "Submit for approval" }).click();
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await page.getByRole("link", { name: /Campaigns awaiting approval/ }).click();
+  await expect(page).toHaveURL(/\/campaigns\?status=pending_approval$/);
+  await expect(page.getByRole("combobox", { name: "Campaign status" })).toHaveValue("pending_approval");
+  await page.locator(`a[href="/campaigns/${campaignId}"]`).click();
   await page
     .getByRole("button", { name: "Approve campaign", exact: true })
     .click();
@@ -252,18 +275,48 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await page.getByLabel("Search audit events").fill("ticket.status_changed");
   await expect(page.locator("tbody")).toContainText("Ticket status: resolved");
   await page.goto("/dashboard");
-  await expect(page.getByText("Judge contacts")).toBeVisible();
-  await page.screenshot({ path: "test-results/dashboard.png", fullPage: true });
+  await expect(page.getByText("Confirmed judges", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Contact summary" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Recent activity" })).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: `Arts invitation ${stamp} sandbox delivery` })).toHaveJSProperty("value", recipients.length);
+  await expect(page.locator(".overview a[href^='/judges?']")).toHaveCount(0);
+  await page.locator(".overview-competition").first().click();
+  await expect(page.getByRole("heading", { name: "Judges", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Competitions", exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/dashboard-light.png", fullPage: true });
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.screenshot({ path: "test-results/dashboard-dark.png", fullPage: true });
   await page.setViewportSize({ width: 768, height: 1024 });
-  await expect(page.getByRole('link', { name: 'Judge directory', exact: true })).not.toBeVisible();
+  await expect(page.getByRole('link', { name: 'Judge Directory', exact: true })).not.toBeVisible();
   await page.getByRole('button', { name: 'Toggle navigation' }).click();
-  await expect(page.getByRole('link', { name: 'Judge directory', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Judge Directory', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Close navigation' }).click();
-  await expect(page.getByRole('link', { name: 'Judge directory', exact: true })).not.toBeVisible();
+  await expect(page.getByRole('link', { name: 'Judge Directory', exact: true })).not.toBeVisible();
   await page.screenshot({ path: "test-results/tablet.png", fullPage: true });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
   ).toBe(true);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobileNavigation = page.getByRole("button", { name: "Toggle navigation" });
+  await mobileNavigation.click();
+  const drawer = page.getByRole("dialog", { name: "MIST Deck" });
+  await expect(drawer).toBeVisible();
+  await expect.poll(() => drawer.locator(".brand-symbol").evaluate((logo: HTMLImageElement) => logo.naturalWidth)).toBeGreaterThan(0);
+  await page.screenshot({ path: "test-results/mobile-navigation.png" });
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await expect(mobileNavigation).toBeFocused();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/mobile-dashboard.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect.poll(() => page.locator(".login-card .brand-symbol").evaluate((logo: HTMLImageElement) => logo.naturalWidth)).toBeGreaterThan(0);
+  await login("tech@example.com");
+  await expect(page.getByRole("navigation").getByRole("link", { name: "Competitions", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Create campaign" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "New ticket" })).toHaveCount(0);
 });

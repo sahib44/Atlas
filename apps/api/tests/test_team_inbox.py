@@ -1,3 +1,4 @@
+from test_recruitment import review
 import os
 from uuid import uuid4
 from datetime import timedelta
@@ -69,7 +70,8 @@ def test_direct_recipients_are_validated_deduplicated_and_saved_only_on_request(
 def test_reply_marks_only_related_competition_and_read_clears_shared_alerts(director):
     competitions = ok(director.get("/api/competitions?category_slug=arts"))["items"]
     first, other = [p for p in competitions if not p["is_pilot"]][:2]
-    nomination = ok(director.post(f"/api/competitions/{first['id']}/judges", json={"name": "Unread Judge", "email": "unread@example.org"}))
+    nomination = ok(director.post(f"/api/competitions/{first['id']}/judges", json={"name": "Unread Judge", "email": "unread@example.org", "qualifications": "Event adjudicator"}))
+    review(director, nomination)
     ok(director.post(f"/api/competitions/{other['id']}/judges", json={"name": "Unread Judge", "existing_judge_id": nomination["judge_id"]}))
     item = campaign(director, judge_ids=[nomination["judge_id"]], pilot_competition_id=first["id"])
     send(director, item)
@@ -208,3 +210,25 @@ def test_direct_email_respects_preserved_address_suppression(director):
     response = director.post("/api/campaigns", json={"name": "Suppression", "subject_template": "Test", "body_template": "Test", "recipients": [{"email": "old-address@example.org"}]})
     assert response.status_code == 400
     assert ok(director.get("/api/campaigns"))["total"] == 0
+
+
+def test_mark_all_notifications_read_respects_scope_and_clears_beyond_first_page(client):
+    member = sign_in(client, "competitions")
+    chair = sign_in(client, "chair")
+    with SessionLocal.begin() as db:
+        db.add_all([
+            Notification(kind="judge_reviewed", title=f"Member update {number}", href="/recruitment",
+                         recipient_user_id=member["id"])
+            for number in range(105)
+        ])
+        db.add(Notification(kind="judge_request", title="Chair review", href="/recruitment",
+                            recipient_user_id=chair["id"]))
+
+    sign_in(client, "competitions")
+    before = ok(client.get("/api/notifications"))
+    assert before["unread_count"] == 105 and len(before["items"]) == 100
+    ok(client.post("/api/notifications/read-all"))
+    assert ok(client.get("/api/notifications"))["unread_count"] == 0
+
+    sign_in(client, "chair")
+    assert ok(client.get("/api/notifications"))["unread_count"] == 1

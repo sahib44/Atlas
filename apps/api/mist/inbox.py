@@ -29,6 +29,10 @@ def notification_scope(user):
     clauses = []
     if allowed(user, "campaigns"):
         clauses.append(Notification.kind.in_(["judge_reply", "delivery_failed"]) & Notification.ticket_id.is_(None))
+    if allowed(user, "recruitment_review"):
+        clauses.append(Notification.kind == "judge_request")
+    if allowed(user, "judges"):
+        clauses.append(Notification.kind == "judge_reviewed")
     if allowed(user, "tickets") or "private_tickets" in user.permissions:
         clauses.append(Notification.ticket_id.in_(ticket_scope(user).with_only_columns(Ticket.id)))
     return select(Notification).where(or_(*clauses) if clauses else False).where(or_(Notification.recipient_user_id.is_(None), Notification.recipient_user_id == user.id))
@@ -39,6 +43,16 @@ def notifications(user=Depends(current_user), db=Depends(get_db)):
     stmt = notification_scope(user)
     unread = db.scalar(select(func.count()).select_from(stmt.where(Notification.read_at.is_(None)).subquery()))
     return {"unread_count": unread, "items": [serialize(n) for n in db.scalars(stmt.order_by(Notification.read_at.is_not(None), Notification.created_at.desc()).limit(100))]}
+
+
+@router.post("/notifications/read-all")
+def read_all_notifications(user=Depends(current_user), db=Depends(get_db)):
+    unread_ids = notification_scope(user).with_only_columns(Notification.id).where(Notification.read_at.is_(None))
+    db.execute(update(Notification).where(
+        Notification.id.in_(unread_ids), Notification.read_at.is_(None),
+    ).values(read_at=now()))
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/notifications/{id}/read")
@@ -75,11 +89,17 @@ def unread_judges(db):
     return dict(db.execute(select(InboundMessage.judge_id, func.count()).where(InboundMessage.judge_id.is_not(None), InboundMessage.read_at.is_(None)).group_by(InboundMessage.judge_id)).all())
 
 
-def competition_unread(db):
-    # A reply associated with a campaign alerts only that competition. General judge
-    # messages alert each active assignment until the judge's conversation is read.
-    from .models import PilotNomination, PilotCompetition
-    return dict(db.execute(select(PilotNomination.pilot_id, func.count(func.distinct(InboundMessage.id))).join(InboundMessage, (InboundMessage.judge_id == PilotNomination.judge_id) & or_(InboundMessage.competition_id == PilotNomination.pilot_id, InboundMessage.competition_id.is_(None))).join(PilotCompetition, PilotCompetition.id == PilotNomination.pilot_id).where(InboundMessage.read_at.is_(None), PilotCompetition.deleted_at.is_(None)).group_by(PilotNomination.pilot_id)).all())
+def competition_unread(db, competition_ids):
+    # A campaign reply alerts its competition. General replies alert each
+    # nomination in the requested competition set.
+    from .models import PilotNomination
+    return dict(db.execute(
+        select(PilotNomination.pilot_id, func.count(func.distinct(InboundMessage.id)))
+        .join(InboundMessage, (InboundMessage.judge_id == PilotNomination.judge_id)
+              & or_(InboundMessage.competition_id == PilotNomination.pilot_id, InboundMessage.competition_id.is_(None)))
+        .where(InboundMessage.read_at.is_(None), PilotNomination.pilot_id.in_(competition_ids))
+        .group_by(PilotNomination.pilot_id)
+    ).all())
 
 
 @router.get("/conversations", response_model=Page)

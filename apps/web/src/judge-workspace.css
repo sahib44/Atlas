@@ -1,0 +1,252 @@
+.judge-app {
+  --judge-line: #e4daf4;
+  --judge-accent: #6419cf;
+  --judge-button: #7027dc;
+  --judge-pane: #faf7ff;
+  --judge-selected: #efe2fc;
+  --judge-blue: #0359ae;
+  --judge-blue-bg: #e0efff;
+  --judge-purple-bg: #ecddff;
+  --judge-green: #08732c;
+  --judge-green-bg: #def4e5;
+}
+:root[data-theme="dark"] .judge-app {
+  --judge-line: #3c3652;
+  --judge-accent: #d09bff;
+  --judge-button: #7830df;
+  --judge-pane: #1d192d;
+  --judge-selected: #443068;
+  --judge-blue: #9bd4ff;
+  --judge-blue-bg: #233c60;
+  --judge-purple-bg: #422e67;
+  --judge-green: #a4f2b5;
+  --judge-green-bg: #204631;
+}
+:root:not([data-theme="dark"]) .judge-app:has(.directory-workspace) { --canvas: #faf8fe; --judge-pane: #fcfaff; }
+.judge-app { background: var(--canvas); }
+.judge-app .content { max-width: 1700px; min-width: 0; padding: clamp(12px, 1.5vw, 24px); }
+.judge-app .footer { display: none; }
+.judge-app .topbar { position: sticky; top: 0; z-index: 10; min-height: 52px; padding-block: 6px; }
+.judge-app .topbar-tools { margin-left: auto; }
+.judge-app .topbar-tools button { min-height: 32px; padding: 4px 8px; }
+.judge-workspace { display: grid; grid-template-columns: minmax(0, 1fr); gap: clamp(12px, 1.25vw, 22px); align-items: start; min-width: 0; }
+.judge-workspace.with-detail { grid-template-columns: minmax(0, 1fr) minmax(290px, 32%); }
+.recruitment-workspace.with-detail { grid-template-columns: minmax(0, 1fr) minmax(320px, 40%); }
+.judge-results { min-width: 0; padding: 0 0 16px; }
+.judge-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px 16px; margin-bottom: 16px; }
+.judge-heading h1, .judge-detail h2 { color: var(--heading); font-size: clamp(1.65rem, 2.12vw, 2.25rem); letter-spacing: -.055em; margin: 0; line-height: 1.05; }
+.recruitment-workspace .judge-heading { margin-bottom: 9px; }
+.recruitment-workspace :is(.judge-heading h1, .judge-detail h2) { font-size: clamp(1.5rem, 1.8vw, 1.86rem); }
+.judge-heading p { margin: 6px 0 0; font-size: .9rem; color: var(--heading); }
+.judge-heading-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 9px; }
+.judge-heading-actions button { white-space: nowrap; }
+.judge-workspace button.primary, .judge-workspace a.primary { background: var(--judge-button); color: #fff; border-color: var(--judge-button); }
+.judge-workspace button.primary:hover, .judge-workspace a.primary:hover { background: var(--primary-hover); }
+.judge-workspace .tournament-selector { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: .78rem; }
+.judge-workspace .tournament-selector select { padding-block: 6px; min-height: 34px; font-size: .82rem; }
+.directory-workspace .tournament-selector { border: 1px solid var(--judge-line); border-radius: 10px; background: var(--judge-pane); padding-left: 10px; gap: 9px; }
+.directory-workspace .tournament-selector select { margin: -1px; border-color: var(--judge-line); }
+.judge-workspace .judge-export { color: var(--judge-accent); background: var(--judge-pane); border-color: var(--judge-line); }
+.judge-metrics { display: grid; gap: 11px; margin-bottom: 16px; }
+.recruitment-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 7px; }
+.directory-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.judge-workspace .judge-metric {
+  display: flex; align-items: center; justify-content: flex-start; text-align: left; gap: 11px;
+  background: var(--judge-pane); border: 1px solid var(--judge-line); border-radius: 12px;
+  min-height: 64px; padding: 8px 11px; box-shadow: 0 2px 5px var(--shadow); min-width: 0;
+}
+.recruitment-metrics .judge-metric { min-height: 54px; }
+.judge-workspace button.judge-metric:hover { background: var(--surface-hover); }
+.judge-metric-icon { display: grid; place-items: center; color: var(--judge-accent); flex: 0 0 auto; }
+.judge-metric-icon svg { width: 26px; height: 26px; }
+.judge-metric-icon.blue { color: var(--judge-blue); }
+.judge-metric-icon.green { color: var(--judge-green); }
+.judge-metric strong { display: flex; align-items: center; gap: 7px; color: var(--heading); font-size: 1.36rem; line-height: 1.1; letter-spacing: -.04em; }
+.judge-metric small { display: block; margin-top: 3px; color: var(--text); font-size: .75rem; font-weight: 500; line-height: 1.12; }
+.directory-metrics .judge-metric { min-height: 80px; padding: 11px 13px; }
+.directory-metrics .judge-metric-icon { width: 44px; height: 44px; border-radius: 14px; background: var(--judge-purple-bg); }
+.directory-metrics .judge-metric-icon.green { background: var(--judge-green-bg); }
+.directory-metrics .judge-metric strong { font-size: clamp(1.15rem, 1.7vw, 1.75rem); }
+.directory-metrics .judge-metric small { font-size: .83rem; }
+.recruitment-tab-row { display: flex; gap: 9px; align-items: center; border-bottom: 1px solid var(--judge-line); }
+.recruitment-tab-row .judge-tabs { flex: 1; border-bottom: 0; min-width: 0; }
+.judge-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--judge-line); overflow: auto; }
+.judge-tabs button { flex: 1; min-height: 34px; border: 0; border-bottom: 3px solid transparent; background: transparent; border-radius: 0; padding: 6px 8px; font-size: .78rem; font-weight: 600; white-space: nowrap; }
+.judge-tabs button[aria-current="page"] { color: var(--judge-accent); border-bottom-color: var(--judge-accent); font-weight: 750; }
+.judge-tabs button:hover { background: var(--surface-hover); }
+.recruitment-pipeline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 9px 0 12px; }
+.recruitment-step { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.recruitment-pipeline .recruitment-stage {
+  display: flex; gap: 10px; align-items: center; flex: 1; min-width: 0; justify-content: center;
+  padding: 6px; border: 1px solid transparent; border-radius: 11px; font-size: .73rem; line-height: 1.2;
+  min-height: 43px; background: var(--judge-purple-bg); color: var(--judge-accent); text-decoration: none;
+}
+.recruitment-stage svg, .stage-arrow { flex-shrink: 0; }
+.recruitment-stage span { display: grid; color: var(--heading); text-align: left; font-weight: 700; }
+.recruitment-stage strong { font-size: .95rem; margin-top: 2px; }
+.recruitment-pipeline .prospect { background: var(--surface-soft); color: var(--text); }
+.recruitment-pipeline .confirmed { background: var(--judge-green-bg); color: var(--judge-green); }
+.recruitment-pipeline .recruitment-stage:is(:hover, [aria-pressed="true"]) { border-color: currentColor; }
+.judge-filters { display: grid; gap: 9px; grid-template-columns: minmax(0, 1.17fr) minmax(0, 1fr) auto; margin-bottom: 12px; }
+.recruitment-workspace .judge-filters { grid-template-columns: minmax(0, 1.36fr) minmax(0, 1fr) minmax(0, .86fr) auto; }
+.judge-filters :is(input, select, button) { min-height: 37px; font-size: .82rem; border-color: var(--judge-line); }
+.recruitment-workspace .judge-filters :is(input, select, button) { min-height: 32px; }
+.judge-filters select { padding: 6px 9px; }
+.judge-search { position: relative; min-width: 0; }
+.judge-search svg { position: absolute; inset-inline-start: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.judge-search input { padding-inline-start: 35px; }
+.judge-filter-toggle { padding: 6px 10px; }
+.judge-extra-filters, .judge-bulk { display: flex; gap: 9px; flex-wrap: wrap; align-items: center; margin: 0 0 10px; font-size: .8rem; }
+.judge-extra-filters select { width: auto; max-width: 100%; }
+.judge-extra-filters button, .judge-bulk button { min-height: 32px; padding: 4px 8px; }
+.judge-table-wrap { position: relative; overflow-x: auto; max-width: 100%; }
+.directory-workspace .judge-table-wrap { border: 1px solid var(--judge-line); border-radius: 13px; box-shadow: 0 2px 6px var(--shadow); background: var(--judge-pane); }
+.judge-workspace .judge-table { width: 100%; border-collapse: collapse; min-width: 570px; font-size: .77rem; }
+.directory-workspace .judge-table { min-width: 680px; font-size: .82rem; }
+.judge-workspace .judge-table th { font-size: inherit; color: var(--heading); background: transparent; letter-spacing: normal; text-transform: none; }
+.directory-workspace .judge-table th { background: var(--surface-soft); }
+.judge-workspace .judge-table :is(th, td) { text-align: left; padding: 5px 7px; border-bottom: 1px solid var(--judge-line); vertical-align: middle; }
+.directory-workspace .judge-table :is(th, td) { padding: 12px 9px; }
+.recruitment-workspace .judge-table :is(th, td) { padding-block: 3px; }
+.judge-table :is(.judge-check, .judge-more) { width: 30px; }
+.judge-workspace .judge-table tr:last-child td { border-bottom: 0; }
+.judge-table tr.judge-selected, .judge-table tbody tr:hover { background: var(--judge-selected); }
+.judge-workspace .judge-table :is(.judge-sort, .judge-row-name, .judge-plain), .judge-detail .judge-plain {
+  min-height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--heading);
+}
+.judge-table .judge-row-name { font-weight: 750; text-align: left; }
+.judge-table :is(.judge-row-name, .judge-sort, .judge-plain):hover, .judge-detail .judge-plain:hover { color: var(--judge-accent); }
+.judge-table input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; accent-color: var(--judge-button); margin: 0; vertical-align: middle; }
+.judge-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.judge-pill, .judge-competition-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 99px;
+  color: var(--judge-accent); background: var(--judge-purple-bg); line-height: 1.1;
+  font-size: .74rem; font-weight: 650;
+}
+.judge-pill svg { flex: 0 0 auto; }
+.judge-pill.prospect { color: var(--text); background: var(--surface-hover); }
+.judge-pill.contacted { color: var(--judge-blue); background: var(--judge-blue-bg); }
+.judge-pill.confirmed { color: var(--judge-green); background: var(--judge-green-bg); }
+.judge-pill:is(.declined, .withdrawn, .rejected) { color: var(--danger-text); background: var(--danger-bg); }
+.judge-pagination { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; align-items: center; margin: 11px 0; font-size: .81rem; }
+.directory-workspace .judge-pagination { margin-top: 20px; }
+.judge-pagination nav, .judge-pagination nav > span { display: flex; gap: 5px; align-items: center; }
+.judge-pagination button { min-width: 32px; min-height: 31px; padding: 4px 7px; border-color: var(--judge-line); }
+.judge-page-gap { padding: 0 5px; }
+.judge-detail {
+  min-width: 0; background: var(--judge-pane); border: 1px solid var(--judge-line);
+  border-radius: 16px; box-shadow: -2px 2px 9px var(--shadow); padding: 13px 16px 17px;
+}
+.judge-detail > header { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; min-height: 34px; margin-bottom: 8px; }
+.judge-detail h2 { overflow-wrap: anywhere; }
+.judge-detail h2:focus { outline: none; }
+.judge-detail .judge-close { margin-left: auto; }
+.judge-detail .judge-tabs { margin-bottom: 12px; }
+.recruitment-workspace .judge-detail { min-height: 0; padding-top: 8px; padding-bottom: 12px; }
+.judge-panel-body { display: grid; align-content: start; gap: 10px; font-size: .84rem; }
+.judge-panel-body small { display: block; color: var(--muted); }
+.judge-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 11px; min-width: 0; }
+.recruitment-workspace .judge-identity { padding: 10px 12px; border: 1px solid var(--judge-line); border-radius: 12px; }
+.judge-identity h3 { margin: 0 0 5px; color: var(--heading); font-size: 1rem; letter-spacing: -.02em; }
+.judge-avatar { display: grid; place-items: center; width: 55px; height: 55px; border-radius: 50%; background: var(--judge-purple-bg); color: var(--judge-accent); font-weight: 800; font-size: 1.22rem; }
+.judge-contact-lines { display: grid; gap: 4px; overflow-wrap: anywhere; }
+.judge-contact-lines > span, .judge-identity-meta > span { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.judge-contact-lines svg, .judge-identity-meta svg { flex-shrink: 0; }
+.judge-identity-meta { display: grid; gap: 6px; border-left: 1px solid var(--judge-line); padding-left: 11px; flex: 1; min-width: 140px; overflow-wrap: anywhere; }
+.judge-detail-card { border: 1px solid var(--judge-line); border-radius: 12px; padding: 10px 11px; min-width: 0; }
+.judge-detail-card h3 { margin: 0 0 8px; font-size: .98rem; letter-spacing: -.025em; }
+.judge-detail-card p { margin: 6px 0; overflow-wrap: anywhere; }
+.candidate-progress ol { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0; margin: 10px 0 0; list-style: none; }
+.candidate-progress li { display: grid; place-items: center; gap: 6px; position: relative; font-size: .73rem; min-width: 0; }
+.candidate-progress li > span { display: grid; place-items: center; width: 22px; height: 22px; border: 2px solid var(--muted); border-radius: 50%; background: var(--judge-pane); z-index: 1; }
+.candidate-progress li:not(:last-child)::after { content: ""; position: absolute; left: 50%; right: -50%; top: 10px; height: 2px; background: var(--judge-line); }
+.candidate-progress li.complete > span { color: var(--judge-accent); border-color: var(--judge-accent); }
+.candidate-progress li.complete:has(+ .complete)::after { background: var(--judge-accent); }
+.candidate-progress li[aria-current="step"] { font-weight: 800; }
+.candidate-progress li[aria-current="step"] > span { box-shadow: 0 0 0 2px var(--judge-purple-bg); }
+.candidate-panels { display: grid; grid-template-columns: minmax(0, 1.23fr) minmax(0, 1fr); gap: 10px; }
+.candidate-summary, .directory-details { margin: 0; }
+.candidate-summary { padding: 0; list-style: none; }
+.candidate-summary > li { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 6px; padding: 4px 0; border: 0; }
+.candidate-summary .candidate-summary-value { line-height: 1.34; overflow-wrap: anywhere; }
+.candidate-summary strong { color: var(--heading); font-weight: 700; margin-right: 4px; }
+.candidate-next { display: grid; align-content: start; gap: 5px; }
+.candidate-next h3 { margin-bottom: 2px; }
+.candidate-next :is(button, a.button, select) { min-height: 31px; padding: 4px 6px; font-size: .77rem; }
+.candidate-next > :is(button, a.button) { justify-content: center; }
+.candidate-next .field { margin: 3px 0; }
+.directory-workspace .judge-detail > header { display: grid; grid-template-columns: 20px minmax(0, 1fr) 22px; }
+.directory-workspace .judge-detail > header .judge-pill { grid-column: 2; grid-row: 2; justify-self: start; padding: 6px 10px; margin-bottom: 3px; }
+.directory-workspace .judge-detail > header .judge-close { grid-column: 3; grid-row: 1; }
+.directory-workspace .judge-identity { padding: 5px 5px 15px; border-bottom: 1px solid var(--judge-line); }
+.directory-workspace .judge-avatar { width: 72px; height: 72px; font-size: 1.5rem; }
+.directory-details > div { display: grid; grid-template-columns: 19px minmax(70px, .75fr) minmax(0, 1.25fr); gap: 8px; align-items: start; padding: 7px 5px; border: 0; }
+.directory-details dt { font-weight: 750; color: var(--heading); }
+.directory-details dd { margin: 0; overflow-wrap: anywhere; }
+.directory-details .directory-text dd { grid-column: 2 / -1; border: 1px solid var(--judge-line); background: var(--surface-soft); border-radius: 12px; padding: 9px 10px; line-height: 1.42; }
+.directory-profile-actions { display: flex; justify-content: space-between; flex-wrap: wrap; align-items: center; gap: 7px; padding: 4px 5px; }
+.directory-profile-actions :is(button, a.button) { padding: 4px 8px; min-height: 30px; font-size: .76rem; }
+.directory-profile-actions .directory-unconfirm { color: var(--judge-accent); border-color: var(--judge-line); background: transparent; }
+.judge-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.judge-edit-form textarea { min-height: 64px; }
+.judge-contact-choice { width: 100%; justify-content: flex-start; margin-bottom: 4px; }
+.judge-contact-choice small { color: var(--muted); }
+.judge-workspace .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (min-width: 1500px) {
+  .directory-workspace .directory-metrics { margin-bottom: 24px; }
+  .directory-workspace .judge-metric { min-height: 87px; }
+  .directory-workspace .judge-filters { margin-bottom: 19px; }
+  .directory-workspace .judge-filters :is(input, select, button) { min-height: 51px; font-size: .94rem; }
+  .directory-workspace .judge-table { font-size: .9rem; }
+  .directory-workspace .judge-table th { padding-block: 14px; }
+  .directory-workspace .judge-table td { padding-block: 17px; }
+  .directory-workspace .judge-detail { padding: 22px 17px 18px; }
+  .directory-workspace .judge-detail > header { margin-bottom: 12px; }
+  .directory-workspace .judge-detail > header .judge-pill { padding-block: 8px; }
+  .directory-workspace .judge-tabs button { min-height: 42px; font-size: .9rem; }
+  .directory-workspace .judge-panel-body, .directory-workspace .directory-details > div { font-size: .94rem; }
+  .directory-workspace .directory-details > div { padding-block: 9px; }
+  .directory-workspace .judge-avatar { width: 86px; height: 86px; }
+}
+@media (max-width: 1280px) {
+  .judge-heading { flex-wrap: wrap; }
+  .recruitment-tab-row { flex-wrap: wrap; }
+  .recruitment-workspace.with-detail .recruitment-metrics,
+  .recruitment-workspace.with-detail .recruitment-pipeline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .recruitment-workspace.with-detail .stage-arrow { display: none; }
+  .recruitment-workspace.with-detail .judge-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .recruitment-workspace.with-detail .judge-search { grid-column: 1 / -1; }
+  .recruitment-workspace.with-detail .candidate-panels { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 960px) {
+  .judge-workspace.with-detail, .recruitment-workspace.with-detail { grid-template-columns: minmax(0, 1fr); }
+  .judge-workspace .judge-detail {
+    position: fixed; inset: 52px 0 0 auto; z-index: 9; width: min(440px, calc(100% - var(--sidebar-width)));
+    overflow: auto; overscroll-behavior: contain; border-radius: 16px 0 0 16px;
+    box-shadow: -8px 0 28px var(--shadow);
+  }
+  .sidebar-collapsed .judge-app .judge-detail { width: min(440px, calc(100% - var(--rail-width))); }
+}
+@media (max-width: 800px) {
+  .judge-app .topbar { padding-inline: 10px; gap: 6px; }
+  .judge-app .judge-detail, .sidebar-collapsed .judge-app .judge-detail { width: min(440px, 100%); }
+}
+@media (max-width: 640px) {
+  .recruitment-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .directory-metrics { gap: 5px; }
+  .directory-metrics .judge-metric { flex-direction: column; align-items: flex-start; gap: 6px; padding: 8px; }
+  .directory-metrics .judge-metric-icon { width: 33px; height: 33px; }
+  .directory-metrics .judge-metric-icon svg { width: 20px; height: 20px; }
+  .judge-filters, .recruitment-workspace .judge-filters { grid-template-columns: minmax(0, 1fr) auto; }
+  .judge-search { grid-column: 1 / -1; }
+  .recruitment-workspace .judge-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .recruitment-pipeline { gap: 4px; }
+  .recruitment-pipeline .recruitment-stage { gap: 3px; padding: 4px 3px; font-size: .66rem; }
+  .recruitment-stage svg { width: 14px; }
+  .stage-arrow { display: none; }
+  .candidate-panels { grid-template-columns: 1fr; }
+  .judge-form-grid { grid-template-columns: 1fr; gap: 0; }
+}
+@media (max-width: 420px) {
+  .judge-app .topbar .sandbox span { display: none; }
+}

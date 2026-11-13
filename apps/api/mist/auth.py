@@ -13,6 +13,8 @@ hasher = PasswordHasher()
 ROLE_PERMISSIONS = {
     "director": {
         "delete",
+        "judge_assign",
+        "recruitment_review",
         "ticket_approve",
         "judges",
         "imports",
@@ -40,7 +42,7 @@ ROLE_PERMISSIONS = {
 COMPETITIONS_ROLES = {"competitions_administrator", "competitions_member", "competitions_chair"}
 for role in COMPETITIONS_ROLES:
     ROLE_PERMISSIONS[role] = {"judges", "imports", "campaigns", "approve", "tickets", "catalogs", "outbox"}
-ROLE_PERMISSIONS["competitions_chair"].update({"delete", "ticket_approve"})
+ROLE_PERMISSIONS["competitions_chair"].update({"delete", "ticket_approve", "judge_assign", "recruitment_review"})
 
 
 def allowed(user, permission):

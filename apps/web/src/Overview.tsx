@@ -1,135 +1,225 @@
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ArrowUpRight, Plus, ShieldCheck } from "lucide-react";
+import {
+  AlertCircle, ArrowRight, ArrowUpRight, BookOpen, Box, Check, Clock, FileWarning,
+  FolderKanban, Image, LifeBuoy, Mail, Palette, PenLine, Plus, ShieldCheck,
+  Trophy, UserRoundPlus, Users, Utensils,
+} from "lucide-react";
 import { useData, Page, Row, can, label, date } from "./api";
 import { useUser } from "./App";
-import { Notifications } from "./Inbox";
+import { UnreadMarker } from "./Inbox";
+import { Coverage, JudgeCoverage, tournamentPath, useTournament } from "./CompetitionCoverage";
 import {
-  Heading,
-  Panel,
-  Loading,
-  ErrorBox,
-  Empty,
-  Badge,
-  Pagination,
-  JsonDetails,
-  Modal,
+  Heading, Panel, Loading, ErrorBox, Empty, Badge, Pagination, JsonDetails, Modal,
 } from "./ui";
+
+type Metric = { label: string; value: number; link: string };
+type DashboardData = {
+  metrics: Metric[];
+  groups: Record<string, Metric[]>;
+  recent_activity: Array<{ id: string; summary: string; action: string; created_at: string }>;
+  latest_import: {
+    id: string;
+    filename: string;
+    status: string;
+    created_count: number;
+    updated_count: number;
+    skipped_count: number;
+  } | null;
+  overdue_definition: string;
+};
+type CompetitionPreview = Coverage & {
+  id: string;
+  name: string;
+  category_slug: string;
+  event_year: number;
+  is_pilot: boolean;
+  unread_count: number;
+};
+type CampaignPreview = { id: string; name: string; status: string };
+type DeliverySummary = { recipient_count: number; counts: Record<string, number> };
+type PreviewPage<T> = { items: T[]; total: number };
+
+const actionLinks = [
+  { link: "/campaigns?status=pending_approval", label: "Campaigns awaiting approval", icon: ShieldCheck },
+  { link: "/duplicates", label: "Duplicate reviews", icon: FileWarning },
+  { link: "/tickets?view=overdue", label: "Overdue tickets", icon: Clock },
+  { link: "/outbox?status=failed", label: "Failed sandbox messages", icon: AlertCircle },
+];
+
+const competitionIcons: Record<string, typeof FolderKanban> = {
+  "2D Art": Image,
+  "3D Art": Box,
+  "Culinary Arts": Utensils,
+  "Extemporaneous Drawing": PenLine,
+};
+const categoryIcons: Record<string, typeof FolderKanban> = {
+  arts: Palette,
+  "knowledge-quran": BookOpen,
+  "writing-oratory": PenLine,
+  brackets: Trophy,
+  "group-projects": Users,
+  "sports-referees": Trophy,
+};
+
+function ViewAll({ to, children = "View all" }: { to: string; children?: string }) {
+  return <Link className="overview-view-all" to={to}>{children}<ArrowRight size={15} aria-hidden="true" /></Link>;
+}
+
+function CampaignProgressItem({ campaign }: { campaign: CampaignPreview }) {
+  const tracksDelivery = ["queued", "sending", "completed", "partially_failed", "cancelled"].includes(campaign.status);
+  const delivery = useData<DeliverySummary>(`/campaigns/${campaign.id}`, tracksDelivery);
+  const total = delivery.data?.recipient_count ?? 0;
+  const sent = delivery.data?.counts.sent ?? 0;
+  const failed = delivery.data?.counts.failed ?? 0;
+  return <div className="campaign-progress-item">
+    <div className="campaign-progress-heading">
+      <Link to={`/campaigns/${campaign.id}`}>{campaign.name}</Link>
+      {total > 0 ? <strong>{Math.round(100 * sent / total)}%</strong> : <Badge value={campaign.status} />}
+    </div>
+    {total > 0 && <>
+      <progress className="campaign-progress-meter" value={sent} max={total} aria-label={`${campaign.name} sandbox delivery`} />
+      <small>{sent}/{total} sandbox messages sent{failed > 0 && ` · ${failed} failed`}</small>
+    </>}
+    {tracksDelivery && delivery.isPending && <small>Loading delivery progress…</small>}
+    {delivery.error && <small>Delivery progress unavailable</small>}
+  </div>;
+}
+
 export function Dashboard() {
-  const query = useData("/dashboard");
+  const query = useData<DashboardData>("/dashboard");
   const user = useUser();
+  const showCompetitions = can(user, "judges");
+  const showCampaigns = can(user, "campaigns");
+  const showDirectory = showCompetitions || can(user, "imports");
+  const canReviewJudges = can(user, "recruitment_review");
+  const tournament = useTournament(showDirectory);
+  const directorySummary = useData<{ confirmed: number }>(`/judge-directory/summary?event_year=${tournament.year}`, showDirectory && tournament.year !== null);
+  const recruitmentSummary = useData<{ requests: number }>(`/recruitment/summary?event_year=${tournament.year}`, canReviewJudges && tournament.year !== null);
+  const judgeRequestsHref = `/recruitment?view=requests${tournament.year === null ? "" : `&event_year=${tournament.year}`}`;
+  const competitionParams = new URLSearchParams({ page_size: "4" });
+  if (tournament.year !== null) competitionParams.set("event_year", String(tournament.year));
+  const competitions = useData<PreviewPage<CompetitionPreview>>(`/competitions?${competitionParams}`, showCompetitions && !tournament.isPending && !tournament.error);
+  const competitionsHref = tournamentPath("/competitions", tournament.year);
+  const campaigns = useData<PreviewPage<CampaignPreview>>("/campaigns?page_size=3", showCampaigns);
   if (query.isPending) return <Loading />;
-  if (query.error) return <ErrorBox error={query.error} />;
+  if (!query.data) return <ErrorBox error={query.error} />;
+
   const data = query.data;
-  const judgeMetrics = data.metrics.filter((m: any) => !m.link.startsWith("/tickets"));
-  const ticketMetrics = data.metrics.filter((m: any) => m.link.startsWith("/tickets"));
-  const judgeGroups = Object.entries(data.groups).filter(([name]) => !name.startsWith("Tickets"));
-  const ticketGroups = Object.entries(data.groups).filter(([name]) => name.startsWith("Tickets"));
-  const metrics = (items: any[]) => (
-    <div className="metrics">
-      {items.map((m) => (
-        <Link key={m.label} to={m.link} className="metric">
-          <span>
-            {m.label}
-            <ArrowUpRight size={17} />
-          </span>
-          <strong>{m.value}</strong>
-          <small>View records</small>
+  const metrics = new Map(data.metrics.map(metric => [metric.link, metric]));
+  const summaryCards = [
+    { link: "/judges", label: "Confirmed judges", icon: Users, value: directorySummary.data?.confirmed },
+    { link: "/outbox?status=sent", label: "Sandbox messages sent", icon: Mail, value: metrics.get("/outbox?status=sent")?.value },
+    { link: "/tickets?view=open", label: "Open tickets", icon: LifeBuoy, value: metrics.get("/tickets?view=open")?.value },
+    { link: competitionsHref, label: tournament.year ? `Competitions · ${tournament.year}` : "Competitions", icon: FolderKanban, value: showCompetitions ? competitions.data?.total : undefined },
+  ].filter(card => card.value !== undefined);
+  const availableActions = actionLinks.filter(item => metrics.has(item.link));
+  const flaggedActions = availableActions.filter(item => (metrics.get(item.link)?.value ?? 0) > 0);
+  const draftCount = metrics.get("/campaigns?status=draft")?.value;
+  const queuedCount = metrics.get("/outbox?status=queued")?.value;
+  const ticketStatuses = data.groups["Tickets by status"];
+
+  return <div className="overview">
+    <Heading title="Operations overview">
+      {can(user, "tickets") && <Link className="button" to="/tickets/new"><Plus size={16} /> New ticket</Link>}
+      {showCampaigns && <Link className="button primary" to="/campaigns/new"><Plus size={16} /> Create campaign</Link>}
+    </Heading>
+    <ErrorBox error={query.error} />
+
+    {summaryCards.length > 0 && <section className="overview-metrics" aria-label="Workspace metrics">
+      {summaryCards.map(({ link, label: title, icon: Icon, value }) => (
+        <Link className="overview-metric" to={link} key={link}>
+          <span className="overview-icon"><Icon size={23} aria-hidden="true" /></span>
+          <span className="overview-metric-copy"><strong>{value?.toLocaleString()}</strong><span>{title}</span></span>
+          <ArrowUpRight className="metric-arrow" size={15} aria-hidden="true" />
         </Link>
       ))}
-    </div>
-  );
-  const groups = (items: [string, unknown][]) => (
-    <div className="two-col">
-      {items.map(([name, values]) => (
-        <Panel key={name} title={name}>
-          {(values as any[]).length ? (
-            (values as any[]).map((v) => (
-              <Link className="stat-row" key={v.label} to={v.link}>
-                <span>{label(v.label)}</span>
-                <strong>{v.value}</strong>
-                <ArrowUpRight size={15} />
-              </Link>
-            ))
-          ) : (
-            <Empty />
-          )}
-        </Panel>
-      ))}
-    </div>
-  );
-  return (
-    <>
-      <Heading title="Operations overview" eyebrow="WORKSPACE"><Notifications /></Heading>
-      {(judgeMetrics.length > 0 || judgeGroups.length > 0) && (
-        <section className="overview-section" aria-labelledby="judge-overview-heading">
-          <div className="section-heading">
-            <h2 id="judge-overview-heading">Judge handling</h2>
-            {can(user, "campaigns") && (
-              <Link className="button primary" to="/campaigns/new">
-                <Plus size={16} /> Create campaign
-              </Link>
-            )}
+    </section>}
+
+    {(canReviewJudges || availableActions.length > 0) && <Panel className="overview-action-panel" title="Action required">
+      <ErrorBox error={recruitmentSummary.error} />
+      <div className="overview-action-list">
+        {canReviewJudges && <Link className="overview-action" to={judgeRequestsHref}>
+          <UserRoundPlus size={17} aria-hidden="true" />
+          <span>Judge requests awaiting approval</span><strong>{recruitmentSummary.data?.requests ?? "—"}</strong>
+          <ArrowRight size={15} aria-hidden="true" />
+        </Link>}
+        {flaggedActions.map(({ link, label: title, icon: Icon }) => (
+          <Link className="overview-action" to={link} key={link}>
+            <Icon size={17} aria-hidden="true" />
+            <span>{title}</span><strong>{metrics.get(link)?.value}</strong>
+            <ArrowRight size={15} aria-hidden="true" />
+          </Link>
+        ))}
+        {!canReviewJudges && !flaggedActions.length && <p className="overview-clear"><Check size={17} aria-hidden="true" /> No items flagged for review in this overview.</p>}
+      </div>
+    </Panel>}
+
+    {(showCampaigns || showCompetitions || queuedCount !== undefined) && <div className="overview-work">
+      {showCampaigns ? <Panel className="overview-campaigns" title="Campaign progress" action={<ViewAll to="/campaigns" />}>
+        <ErrorBox error={campaigns.error} />
+        {campaigns.isPending ? <Loading /> : campaigns.data?.items.length ? (
+          <div className="campaign-progress-list">
+            {campaigns.data.items.map(campaign => <CampaignProgressItem campaign={campaign} key={campaign.id} />)}
           </div>
-          {metrics(judgeMetrics)}
-          {groups(judgeGroups)}
-          {data.latest_import && (
-            <Panel
-              title="Latest import"
-              action={<Link to={"/imports/" + data.latest_import.id}>View import →</Link>}
-            >
-              <div className="summary-strip">
-                <strong>{data.latest_import.filename}</strong>
-                <Badge value={data.latest_import.status} />
-                <span>{data.latest_import.created_count} created</span>
-                <span>{data.latest_import.updated_count} updated</span>
-                <span>{data.latest_import.skipped_count} skipped</span>
-              </div>
-            </Panel>
-          )}
-        </section>
-      )}
-      {(ticketMetrics.length > 0 || ticketGroups.length > 0) && (
-        <section className="overview-section" aria-labelledby="ticket-overview-heading">
-          <div className="section-heading">
-            <h2 id="ticket-overview-heading">Competitions tickets</h2>
-            {can(user, "tickets") && (
-              <Link className="button" to="/tickets/new">
-                <Plus size={16} /> New ticket
-              </Link>
-            )}
+        ) : campaigns.data && <Empty>No outreach campaigns yet.</Empty>}
+        <div className="overview-panel-footer">
+          {draftCount !== undefined && <Link to="/campaigns?status=draft">{draftCount} {draftCount === 1 ? "draft" : "drafts"}</Link>}
+          {queuedCount !== undefined && <Link to="/outbox?status=queued">{queuedCount} sandbox messages queued</Link>}
+        </div>
+      </Panel> : queuedCount !== undefined && <Panel title="Sandbox outbox" action={<ViewAll to="/outbox" />}>
+        <Link className="stat-row" to="/outbox?status=queued"><span>Sandbox messages queued</span><strong>{queuedCount}</strong><ArrowRight size={15} /></Link>
+      </Panel>}
+      {showCompetitions && <Panel className="overview-competitions" title="Competitions" action={<ViewAll to={competitionsHref} />}>
+        <ErrorBox error={tournament.error || competitions.error} />
+        {!tournament.error && (competitions.isPending ? <Loading /> : competitions.data?.items.length ? (
+          <div className="overview-competition-grid">
+            {competitions.data.items.map(competition => {
+              const Icon = competitionIcons[competition.name] || categoryIcons[competition.category_slug] || FolderKanban;
+              return <Link className="overview-competition" key={competition.id} to={`/competitions/${competition.category_slug}/${competition.id}`}>
+                <Icon size={25} aria-hidden="true" />
+                <strong>{competition.name} <UnreadMarker count={competition.unread_count} /></strong>
+                <JudgeCoverage name={competition.name} confirmed_count={competition.confirmed_count} required_count={competition.required_count} />
+                <span className="overview-competition-year">{competition.is_pilot && "Pilot · "}{competition.event_year}</span>
+              </Link>;
+            })}
           </div>
-          {metrics(ticketMetrics)}
-          {groups(ticketGroups)}
-        </section>
-      )}
-      {can(user, "audit") && (
-        <Panel
-          title="Recent activity"
-          action={<Link to="/audit">Open audit trail →</Link>}
-        >
-          {data.recent_activity.length ? (
-            data.recent_activity.map((a: Row) => (
-              <Link to={"/audit?q=" + a.action} key={a.id} className="activity">
-                <span className="activity-icon">
-                  <ShieldCheck size={16} />
-                </span>
-                <div>
-                  <strong>{a.summary}</strong>
-                  <small>{label(a.action)}</small>
-                </div>
-                <time>{date(a.created_at)}</time>
-              </Link>
-            ))
-          ) : (
-            <Empty />
-          )}
-        </Panel>
-      )}
-      <p className="caption">{data.overdue_definition}</p>
-    </>
-  );
+        ) : competitions.data && <Empty>No competitions found.</Empty>)}
+      </Panel>}
+    </div>}
+
+    {can(user, "audit") && <Panel className="overview-activity" title="Recent activity" action={<ViewAll to="/audit" />}>
+      {data.recent_activity.length ? data.recent_activity.slice(0, 5).map(event => (
+        <Link to={`/audit?q=${encodeURIComponent(event.action)}`} key={event.id} className="overview-activity-row">
+          <ShieldCheck size={17} aria-hidden="true" />
+          <span>{event.summary}</span>
+          <time dateTime={event.created_at}>{date(event.created_at)}</time>
+        </Link>
+      )) : <Empty>No recent activity.</Empty>}
+    </Panel>}
+
+    {(ticketStatuses || data.latest_import) && <div className="overview-secondary">
+      {ticketStatuses && <Panel title="Tickets by status">
+        {ticketStatuses.length ? ticketStatuses.map(item => (
+          <Link className="stat-row" key={item.label} to={item.link}>
+            <span>{label(item.label)}</span><strong>{item.value}</strong><ArrowRight size={15} aria-hidden="true" />
+          </Link>
+        )) : <Empty>No tickets yet.</Empty>}
+        <p className="caption overview-overdue-definition">{data.overdue_definition}</p>
+      </Panel>}
+      {data.latest_import && <Panel title="Latest import" action={<ViewAll to={`/imports/${data.latest_import.id}`}>View import</ViewAll>}>
+        <div className="summary-strip">
+          <strong>{data.latest_import.filename}</strong>
+          <Badge value={data.latest_import.status} />
+          <span>{data.latest_import.created_count} created</span>
+          <span>{data.latest_import.updated_count} updated</span>
+          <span>{data.latest_import.skipped_count} skipped</span>
+        </div>
+      </Panel>}
+    </div>}
+  </div>;
 }
+
 export function AuditPage() {
   const [params, setParams] = useSearchParams();
   const query = useData<Page>("/audit-events?" + params);
@@ -138,7 +228,6 @@ export function AuditPage() {
     <>
       <Heading
         title="Audit trail"
-        description="A traceable record of important actions across your workspace."
       />
       <div className="toolbar">
         <input

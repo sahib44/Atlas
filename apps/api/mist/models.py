@@ -6,12 +6,15 @@ from sqlalchemy import (
     Integer,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
+    CheckConstraint,
     Index,
     UniqueConstraint,
     Sequence,
     Float,
     LargeBinary,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -136,9 +139,14 @@ class PilotCompetition(Record, Base):
     event_year: Mapped[int] = mapped_column(Integer, index=True)
     category_slug: Mapped[str] = mapped_column(String(80), index=True, default="group-projects")
     is_pilot: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    activation_status: Mapped[str] = mapped_column(String(30), server_default="active", default="active")
     deleted_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     deleted_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    __table_args__ = (
+        UniqueConstraint("id", "event_year", name="uq_competition_id_year"),
+        CheckConstraint("activation_status IN ('active', 'inactive', 'pending_approval')", name="ck_competition_activation"),
+    )
 
 
 Index(
@@ -160,7 +168,37 @@ class PilotNomination(Record, Base):
     qualification_text: Mapped[str] = mapped_column(Text, default="")
     last_contacted_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     responded_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
-    __table_args__ = (UniqueConstraint("pilot_id", "judge_id"),)
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    review_status: Mapped[str | None] = mapped_column(String(24))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    reviewed_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    reopened_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    request_notes: Mapped[str] = mapped_column(Text, server_default="", default="")
+    prior_involvement: Mapped[str] = mapped_column(String(300), server_default="", default="")
+    __table_args__ = (
+        UniqueConstraint("pilot_id", "judge_id"),
+        CheckConstraint("review_status IN ('pending', 'approved', 'rejected')", name="ck_nomination_review_status"),
+    )
+
+
+class OfficialJudgeAssignment(Record, Base):
+    __tablename__ = "official_judge_assignments"
+    competition_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), index=True)
+    event_year: Mapped[int] = mapped_column(Integer)
+    slot_number: Mapped[int] = mapped_column(Integer)
+    judge_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("judge_contacts.id", ondelete="SET NULL"), index=True)
+    judge_name: Mapped[str] = mapped_column(String(400))
+    confirmed_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    released_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    released_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
+    release_reason: Mapped[str | None] = mapped_column(String(50))
+    __table_args__ = (
+        ForeignKeyConstraint(["competition_id", "event_year"], ["pilot_competitions.id", "pilot_competitions.event_year"], name="fk_official_assignment_competition_year"),
+        CheckConstraint("slot_number BETWEEN 1 AND 3", name="ck_official_assignment_slot"),
+        CheckConstraint("released_at IS NOT NULL OR judge_id IS NOT NULL", name="ck_official_assignment_live_judge"),
+        Index("uq_official_competition_slot", "competition_id", "slot_number", unique=True, postgresql_where=text("released_at IS NULL")),
+        Index("uq_official_tournament_judge", "event_year", "judge_id", unique=True, postgresql_where=text("released_at IS NULL")),
+    )
 
 
 class PilotDocument(Record, Base):
@@ -245,6 +283,8 @@ class MergeEvent(Record, Base):
 
 class Campaign(Record, Base):
     __tablename__ = "campaigns"
+    event_year: Mapped[int | None] = mapped_column(Integer)
+    allow_declined_outreach: Mapped[bool] = mapped_column(Boolean, server_default=text("false"), default=False)
     name: Mapped[str] = mapped_column(String(200))
     subject_template: Mapped[str] = mapped_column(Text)
     body_template: Mapped[str] = mapped_column(Text)

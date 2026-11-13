@@ -113,6 +113,11 @@ export function Campaigns() {
     </>
   );
 }
+const judgeInvitation = {
+  subject: "An invitation to judge {{event_name}}",
+  body: "Hello {{first_name}},\n\nWe would love to invite you to judge {{category_name}} at {{event_name}} on {{event_date}}.\n\nPlease respond by {{response_deadline}}.\n\nThank you,\nThe MIST NJ team",
+};
+
 export function CampaignNew() {
   const [params] = useSearchParams();
   const pilotId = params.get("competition_id") || params.get("pilot_id");
@@ -133,12 +138,15 @@ export function CampaignNew() {
   const [excluded, setExcluded] = useState<any[]>([]);
   const [created, setCreated] = useState<Row | null>(null);
   const [fileError, setFileError] = useState<unknown>();
+  const [template, setTemplate] = useState("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
   return (
     <>
       <Back to={pilotId && pilot.data ? `/competitions/${pilot.data.category_slug}/${pilotId}` : "/campaigns"}>{pilotId ? "Competition" : "Campaigns"}</Back>
       <Heading
         title={pilotId ? `Compose for ${pilot.data?.name || "competition"}` : "Compose an invitation"}
-        description="Each recipient receives a separate sandbox message."
+        description={params.get("allow_declined") === "1" ? "Manual follow-up to a declined candidate. Each recipient receives a separate sandbox message." : "Each recipient receives a separate sandbox message."}
       />
       <form
         onSubmit={async (e) => {
@@ -154,6 +162,8 @@ export function CampaignNew() {
                 judge_ids: recipients.filter(r => r.judge_id).map(r => r.judge_id),
                 recipients: recipients.filter(r => !r.judge_id).map(r => ({ email: r.email, name: r.name, add_to_directory: !!r.add_to_directory })),
                 pilot_competition_id: pilotId,
+                event_year: params.get("event_year") ? Number(params.get("event_year")) : null,
+                allow_declined_outreach: params.get("allow_declined") === "1",
                 variables: {
                   event_name: fd.get("event_name"),
                   event_date: fd.get("event_date"),
@@ -194,10 +204,7 @@ export function CampaignNew() {
             <ErrorBox error={initial.error} />
             <div className="form-grid">
               <Field label="Event name">
-                <input
-                  name="event_name"
-                  defaultValue={pilot.data?.name || "MIST NJ · Sandbox Event"}
-                />
+                <input name="event_name" />
               </Field>
               <Field label="Event date">
                 <input type="date" name="event_date" />
@@ -208,11 +215,27 @@ export function CampaignNew() {
             </div>
           </Panel>
           <Panel title="Message">
+            <Field label="Message template">
+              <select value={template} onChange={event => setTemplate(event.target.value)}>
+                <option value="">Choose a template</option>
+                <option value="judge-invitation">Judge invitation</option>
+              </select>
+            </Field>
+            {template === "judge-invitation" && <details open className="pilot-existing">
+              <summary>Judge invitation preview</summary>
+              <p><strong>{judgeInvitation.subject}</strong></p>
+              <p className="message-body">{judgeInvitation.body}</p>
+              <button type="button" disabled={!!(subject.trim() || body.trim())} onClick={() => {
+                setSubject(judgeInvitation.subject);
+                setBody(judgeInvitation.body);
+              }}>Use template in blank message</button>
+            </details>}
             <Field label="Subject">
               <input
                 name="subject"
                 required
-                defaultValue="An invitation to judge {{event_name}}"
+                value={subject}
+                onChange={event => setSubject(event.target.value)}
               />
             </Field>
             <Field label="Email body">
@@ -220,9 +243,8 @@ export function CampaignNew() {
                 rows={12}
                 required
                 name="body"
-                defaultValue={
-                  "Hello {{first_name}},\n\nWe would love to invite you to judge {{category_name}} at {{event_name}} on {{event_date}}.\n\nPlease respond by {{response_deadline}}.\n\nThank you,\nThe MIST NJ team"
-                }
+                value={body}
+                onChange={event => setBody(event.target.value)}
               />
             </Field>
             <Field label="Attachments (optional; up to five files, 5 MB each)">
@@ -433,7 +455,6 @@ export function Outbox() {
     <>
       <Heading
         title="Sandbox outbox"
-        description="Every outbound message, safely captured in your local database."
       />
       <div className="review-callout outbox-reassurance">
         <ShieldCheck size={22} />

@@ -12,6 +12,7 @@ from .models import *
 from .schemas import *
 from . import schemas as s
 from .auth import current_user, require, allowed, login, fail
+from .assignments import lock_assignments, merge_assignment_contacts
 from .services import *
 
 app = FastAPI(title="MIST Deck", version="1.2.0")
@@ -77,6 +78,21 @@ def sign_in(data: Login, response: Response, db=Depends(get_db)):
 @app.get("/api/auth/me", response_model=UserView)
 def me(user=Depends(current_user)):
     return user
+
+
+@app.patch("/api/auth/me", response_model=UserView)
+def update_profile(data: ProfileUpdate, user=Depends(current_user), db=Depends(get_db)):
+    profile = get(db, User, user.id, True)
+    full_name = clean(data.full_name).strip()
+    if not full_name:
+        fail("name_required", "Enter a display name.")
+    if profile.full_name != full_name:
+        before = {"full_name": profile.full_name}
+        profile.full_name = full_name
+        audit(db, user, "user.profile_updated", profile, "Updated profile display name",
+              before, {"full_name": full_name})
+    db.commit()
+    return profile
 
 
 @app.post("/api/auth/logout")
@@ -295,6 +311,7 @@ def merge_contacts(
 ):
     if not data.confirmed or id == data.merged_judge_id:
         fail("invalid_merge", "Confirm a merge of two different contacts.")
+    lock_assignments(db)
     # Consistent order prevents competing merges from deadlocking.
     locked = {
         j.id: j
@@ -308,6 +325,8 @@ def merge_contacts(
     if len(locked) != 2 or any(j.merged_into_id for j in locked.values()):
         fail("invalid_merge", "Both contacts must be active records.")
     survivor, other = locked[id], locked[data.merged_judge_id]
+    merge_assignment_contacts(db, survivor, other, user)
+    merge_recruitment_contacts(db, survivor, other, user)
     merge_data(
         db,
         survivor,
@@ -414,6 +433,7 @@ from .dashboard import router as dashboard_router
 from .pilots import router as pilots_router
 from .directory import router as directory_router
 from .inbox import router as inbox_router
+from .recruitment import merge_recruitment_contacts, router as recruitment_router
 
 app.include_router(imports_router)
 app.include_router(campaigns_router)
@@ -422,6 +442,7 @@ app.include_router(dashboard_router)
 app.include_router(pilots_router)
 app.include_router(directory_router)
 app.include_router(inbox_router)
+app.include_router(recruitment_router)
 
 
 @app.get("/api/system")

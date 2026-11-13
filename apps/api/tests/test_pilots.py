@@ -3,6 +3,7 @@ from uuid import UUID
 from mist.db import SessionLocal, now
 from mist.models import Audit, PilotNomination
 from mist.worker import run_once
+from test_recruitment import review
 
 
 def ok(response):
@@ -36,6 +37,7 @@ def test_pilot_folder_judges_documents_filters_and_individual_mock_messages(dire
             "phone": f"555-010{number}",
             "qualifications": "Software; Engineering",
         }))
+        review(director, item)
         nominations.append(item)
     assert director.post(f"/api/competitions/{pilot_id}/judges", json={
         "name": "Missing contact", "email": "", "phone": "",
@@ -102,8 +104,9 @@ def test_sandbox_pilot_message_advances_to_contact_and_resets_follow_up_clock(di
         "name": "Mock outreach", "event_year": "2027", "category_slug": "group-projects",
     }))["id"]
     nomination = ok(director.post(f"/api/competitions/{pilot_id}/judges", json={
-        "name": "Sample Outreach Judge", "email": "outreach@example.org",
+        "name": "Sample Outreach Judge", "email": "outreach@example.org", "qualifications": "Experienced judge",
     }))
+    review(director, nomination)
     judge_id = ok(director.get(f"/api/competitions/{pilot_id}/judges"))["items"][0]["judge"]["id"]
     campaign_id = ok(director.post("/api/campaigns", json={
         "name": "Pilot invitation",

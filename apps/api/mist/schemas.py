@@ -23,6 +23,10 @@ class UserView(BaseModel):
     is_active: bool
 
 
+class ProfileUpdate(Input):
+    full_name: str = Field(min_length=1, max_length=200)
+
+
 class ObjectView(BaseModel):
     """Explicitly serialized public record; never accepts an ORM instance."""
 
@@ -103,6 +107,8 @@ class CampaignIn(Input):
     judge_ids: list[UUID] = Field(default_factory=list, max_length=5000)
     recipients: list[DirectRecipient] = Field(default_factory=list, max_length=5000)
     pilot_competition_id: UUID | None = None
+    event_year: int | None = Field(default=None, ge=2000, le=2200)
+    allow_declined_outreach: bool = False
     variables: dict[str, str] = Field(default_factory=dict)
 
 
@@ -119,6 +125,27 @@ class PilotJudgeIn(Input):
     existing_judge_id: UUID | None = None
 
 
+class RecruitmentIn(Input):
+    competition_id: UUID
+    name: str = Field(min_length=1, max_length=400)
+    email: str = Field(min_length=3, max_length=254)
+    phone: str = Field(default="", max_length=50)
+    qualifications: str = Field(min_length=1, max_length=2000)
+    notes: str = Field(default="", max_length=5000)
+    prior_involvement: str = Field(default="", max_length=300)
+    existing_judge_id: UUID | None = None
+
+
+class RecruitmentReview(Input):
+    decision: Literal["approved", "rejected"]
+    version: datetime
+
+
+class JudgeDetailsIn(Input):
+    qualifications: str = Field(max_length=2000)
+    notes: str = Field(max_length=5000)
+
+
 class PilotStatusIn(Input):
     status: Literal["to_contact", "awaiting_response", "accepted", "declined"]
 
@@ -127,6 +154,12 @@ class PilotDeleteIn(Input):
     confirmed_first: bool
     confirmed_second: bool
     exact_name: str = Field(min_length=1, max_length=200)
+
+
+class OfficialAssignmentIn(Input):
+    nomination_id: UUID
+    slot_number: int = Field(ge=1, le=3)
+    previous_assignment_id: UUID | None = None
 
 
 class TicketIn(Input):
