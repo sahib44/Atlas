@@ -28,7 +28,7 @@ import {
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useData, useAction, User, Page, can, label } from "./api";
+import { SessionScope, isAccessError, useData, useAction, User, Page, can, label } from "./api";
 import { Field, ErrorBox, Loading, HistoryBack, Modal } from "./ui";
 import { Dashboard, AuditPage } from "./Overview";
 import { JudgeConversation, Notifications } from "./Inbox";
@@ -253,7 +253,7 @@ export default function App() {
   }, []);
   const toggleTheme = () => setTheme((current) => current === "dark" ? "light" : "dark");
   if (auth.isPending) return <Loading />;
-  if (!auth.data || auth.error)
+  if (!auth.data || isAccessError(auth.error))
     return (
       <Routes>
         <Route path="/login" element={<Login theme={theme} onToggleTheme={toggleTheme} />} />
@@ -267,6 +267,7 @@ export default function App() {
     requestAnimationFrame(() => menuTrigger.current?.focus());
   };
   return (
+    <SessionScope.Provider value={JSON.stringify([user.id, user.role, [...user.permissions].sort()])}>
     <Auth.Provider value={user}>
       <BackgroundNotice />
       <div className={collapsed ? "app sidebar-collapsed" : "app"}>
@@ -468,5 +469,6 @@ export default function App() {
         </div>
       </div>
     </Auth.Provider>
+    </SessionScope.Provider>
   );
 }

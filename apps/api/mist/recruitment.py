@@ -11,7 +11,7 @@ from .auth import allowed, fail, require
 from .competition_catalog import CATEGORIES
 from .db import get_db, now
 from .inbox import notify
-from .models import Audit, Engagement, Judge, Notification, OfficialJudgeAssignment, PilotCompetition, PilotNomination, User
+from .models import Audit, Engagement, Judge, Notification, OfficialJudgeAssignment, PilotCompetition, PilotNomination, RetainedSuppression, User
 from .schemas import JudgeDetailsIn, OfficialAssignmentIn, Page, PilotStatusIn, RecruitmentIn, RecruitmentReview
 from .services import audit, clean, contact_email, email, get, serialize, write_judge
 
@@ -35,6 +35,9 @@ def email_contacts(address):
 def contact_suppressed(db, address, judge_id=None):
     """Check current preferences for the linked contact and actual destination."""
     address = email(address)
+    if address and db.get(RetainedSuppression, address):
+        return True
+
     def matches(column):
         # Contact writes normalize addresses. Handle case and whitespace in older values.
         return func.lower(func.btrim(column, EMAIL_WHITESPACE)) == address
@@ -455,6 +458,8 @@ def merge_recruitment_contacts(db, survivor, other, actor):
 
 def outreach_block(db, competition, address, judge_id=None, allow_declined=False, event_year=None):
     """Validate managed requests even when a recipient was entered as a raw email."""
+    if competition and (competition.deleted_at or competition.activation_status != "active"):
+        return "Competition is inactive"
     contacts = email_contacts(address).with_only_columns(Judge.id)
     ids = set(db.scalars(contacts))
     if judge_id:
@@ -464,8 +469,6 @@ def outreach_block(db, competition, address, judge_id=None, allow_declined=False
     stmt = select(PilotNomination, PilotCompetition).join(PilotCompetition).where(
         PilotNomination.judge_id.in_(ids), PilotCompetition.deleted_at.is_(None))
     if competition:
-        if competition.deleted_at or competition.activation_status != "active":
-            return "Competition is inactive"
         stmt = stmt.where(PilotCompetition.id == competition.id)
     else:
         stmt = stmt.where(PilotNomination.review_status.is_not(None))

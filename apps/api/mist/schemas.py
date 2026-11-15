@@ -101,6 +101,7 @@ class DirectRecipient(Input):
 
 
 class CampaignIn(Input):
+    request_id: UUID | None = None
     name: str = Field(min_length=1, max_length=200)
     subject_template: str = Field(min_length=1, max_length=500)
     body_template: str = Field(min_length=1, max_length=30000)

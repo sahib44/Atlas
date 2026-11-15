@@ -142,8 +142,11 @@ def update_user(
     if target.id == user.id and (data.role != "director" or not data.is_active):
         fail("self_demotion", "You cannot disable or demote your own director account.")
     before = UserView.model_validate(target).model_dump(mode="json")
+    could_approve_tickets = target.is_active and allowed(target, "ticket_approve")
     for key, value in data.model_dump().items():
         setattr(target, key, value)
+    if could_approve_tickets and not (target.is_active and allowed(target, "ticket_approve")):
+        audit(db, user, "user.ticket_approval_revoked", target, "Ticket approval permission revoked")
     audit(
         db,
         user,
@@ -308,6 +311,13 @@ def judge_update(
     if judge.merged_into_id:
         fail("invalid_judge", "Use the surviving contact before editing this judge.", 409)
     judge = write_judge(db, values, user, judge)
+    if values.get("do_not_contact") is False:
+        removed = db.execute(delete(RetainedSuppression).where(
+            RetainedSuppression.email.in_(judge_email_addresses(judge))
+        )).rowcount
+        if removed:
+            audit(db, user, "judge.retained_suppression_cleared", judge,
+                  "Cleared retained email suppression", after={"address_count": removed})
     db.commit()
     return judge_views(db, [judge])[0]
 
@@ -413,29 +423,16 @@ def audit_events(
     user=Depends(require("audit")),
     db=Depends(get_db),
 ):
-    stmt = select(Audit).order_by(Audit.created_at.desc())
+    stmt = audit_scope(user).order_by(Audit.created_at.desc())
     if q:
         stmt = stmt.where(
             or_(Audit.action.ilike(f"%{q}%"), Audit.summary.ilike(f"%{q}%"))
         )
-    result = page(db, stmt, page_no, page_size)
-    if (
-        user.role == "technology_administrator"
-        and "private_tickets" not in user.permissions
-    ):
-        for item in result["items"]:
-            if item["entity_type"] in {
-                "tickets",
-                "ticket_internal_notes",
-                "ticket_messages",
-            }:
-                item["before_data"] = item["after_data"] = None
-                item["summary"] = "Ticket action (content restricted)"
-    return result
+    return page(db, stmt, page_no, page_size)
 
 
 from .imports import router as imports_router
-from .campaigns import router as campaigns_router
+from .campaigns import outbox_scope, router as campaigns_router
 from .tickets import router as tickets_router
 from .dashboard import router as dashboard_router
 from .pilots import router as pilots_router
@@ -478,7 +475,7 @@ def system_configuration(user=Depends(require("jobs")), db=Depends(get_db)):
         "configuration_source": "Environment variables; restart services after changing .env",
         "queue": dict(
             db.execute(
-                select(Outbound.status, func.count()).group_by(Outbound.status)
+                outbox_scope(user).with_only_columns(Outbound.status, func.count()).group_by(Outbound.status)
             ).all()
         ),
     }

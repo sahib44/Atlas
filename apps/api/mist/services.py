@@ -6,9 +6,9 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from uuid import UUID
 import bleach
-from sqlalchemy import select, func, or_, delete
+from sqlalchemy import String, cast, select, func, or_, delete
 from .models import *
-from .auth import fail
+from .auth import allowed, fail
 
 FIELDS = [
     "first_name",
@@ -43,6 +43,11 @@ def clean(value):
 
 def email(value):
     return str(value or "").strip().lower()
+
+
+def judge_email_addresses(judge):
+    addresses = (judge.primary_email, judge.alternate_email, *judge.preserved_emails)
+    return {normalized for address in addresses if (normalized := email(address))}
 
 
 def safe_email(value, optional=False):
@@ -125,6 +130,18 @@ def audit(db, actor, action, obj, summary, before=None, after=None):
             before_data=before,
             after_data=after,
         )
+    )
+
+
+def audit_scope(user):
+    statement = select(Audit)
+    if allowed(user, "tickets") or "private_tickets" in user.permissions:
+        return statement
+    ticket_messages = select(cast(Outbound.id, String)).where(Outbound.related_ticket_id.is_not(None))
+    return statement.where(
+        Audit.entity_type.not_in(("tickets", "ticket_messages", "ticket_internal_notes",
+                                  "ticket_drafts", "ticket_actions")),
+        or_(Audit.entity_type != "outbound_messages", Audit.entity_id.not_in(ticket_messages)),
     )
 
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Link,
   useParams,
@@ -7,7 +7,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { Plus, Send, Mail, ShieldCheck } from "lucide-react";
-import { useData, useAction, api, Page, Row, can, label, date } from "./api";
+import { useData, useAction, api, Page, Row, can, label, date, requestId } from "./api";
 import { useUser } from "./App";
 import { RecipientPicker, EmailRecipient } from "./Recipients";
 import { Conversations, SimulateIncoming } from "./Inbox";
@@ -141,6 +141,9 @@ export function CampaignNew() {
   const [template, setTemplate] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const draftRequest = useRef<{ signature: string; id: string } | null>(null);
+  const submittingDraft = useRef(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   return (
     <>
       <Back to={pilotId && pilot.data ? `/competitions/${pilot.data.category_slug}/${pilotId}` : "/campaigns"}>{pilotId ? "Competition" : "Campaigns"}</Back>
@@ -151,25 +154,33 @@ export function CampaignNew() {
       <form
         onSubmit={async (e) => {
           e.preventDefault();
+          if (submittingDraft.current || created) return;
           const fd = new FormData(e.currentTarget);
+          const payload = {
+            name: fd.get("name"),
+            subject_template: fd.get("subject"),
+            body_template: fd.get("body"),
+            judge_ids: recipients.filter(r => r.judge_id).map(r => r.judge_id),
+            recipients: recipients.filter(r => !r.judge_id).map(r => ({ email: r.email, name: r.name, add_to_directory: !!r.add_to_directory })),
+            pilot_competition_id: pilotId,
+            event_year: params.get("event_year") ? Number(params.get("event_year")) : null,
+            allow_declined_outreach: params.get("allow_declined") === "1",
+            variables: {
+              event_name: fd.get("event_name"),
+              event_date: fd.get("event_date"),
+              response_deadline: fd.get("response_deadline"),
+            },
+          };
+          const signature = JSON.stringify(payload);
+          if (draftRequest.current?.signature !== signature) {
+            draftRequest.current = { signature, id: requestId() };
+          }
+          submittingDraft.current = true;
+          setSavingDraft(true);
           try {
             const result = await action.mutateAsync({
               path: "/campaigns",
-              body: {
-                name: fd.get("name"),
-                subject_template: fd.get("subject"),
-                body_template: fd.get("body"),
-                judge_ids: recipients.filter(r => r.judge_id).map(r => r.judge_id),
-                recipients: recipients.filter(r => !r.judge_id).map(r => ({ email: r.email, name: r.name, add_to_directory: !!r.add_to_directory })),
-                pilot_competition_id: pilotId,
-                event_year: params.get("event_year") ? Number(params.get("event_year")) : null,
-                allow_declined_outreach: params.get("allow_declined") === "1",
-                variables: {
-                  event_name: fd.get("event_name"),
-                  event_date: fd.get("event_date"),
-                  response_deadline: fd.get("response_deadline"),
-                },
-              },
+              body: { ...payload, request_id: draftRequest.current.id },
             });
             try {
               for (const file of fd.getAll("attachments")) {
@@ -187,7 +198,10 @@ export function CampaignNew() {
               setExcluded(result.excluded);
               setCreated(result);
             } else navigate("/campaigns/" + result.id);
-          } catch {}
+          } catch {} finally {
+            submittingDraft.current = false;
+            setSavingDraft(false);
+          }
         }}
       >
         <div className="compose-grid">
@@ -278,7 +292,7 @@ export function CampaignNew() {
         <ErrorBox error={action.error || fileError} />
         <div className="form-footer">
           <Link to="/campaigns">Cancel</Link>
-          <button className="primary" disabled={action.isPending || !!created || !recipients.length || (ids.length > 0 && !initialized)}>
+          <button className="primary" disabled={savingDraft || !!created || !recipients.length || (ids.length > 0 && !initialized)}>
             <Mail size={16} /> Create draft & preview
           </button>
         </div>
@@ -449,8 +463,8 @@ export function Outbox() {
   const [selected, setSelected] = useState<Row | null>(null);
   const [forwarding, setForwarding] = useState(false);
   const [forwardNotice, setForwardNotice] = useState("");
-  const current =
-    query.data?.items.find((r) => r.id === selected?.id) || selected;
+  const forwardRequest = useRef<{ signature: string; id: string } | null>(null);
+  const current = query.data?.items.find((r) => r.id === selected?.id);
   return (
     <>
       <Heading
@@ -576,8 +590,29 @@ export function Outbox() {
           </dl>
           {current.last_error && <ErrorBox error={current.last_error} />}
           <ErrorBox error={action.error} />
-          {current.status === "sent" && can(user, "outbox") && <button onClick={() => setForwarding(!forwarding)}>{forwarding ? "Cancel forward" : "Forward message"}</button>}
-          {forwarding && <form onSubmit={async e => { e.preventDefault(); const values = new FormData(e.currentTarget); try { await action.mutateAsync({ path: `/outbox/${current.id}/forward`, body: { recipient_email: values.get("recipient_email"), note: values.get("note") } }); setForwardNotice("Forward queued in the sandbox outbox."); setForwarding(false); setSelected(null); } catch {} }}>
+          {current.status === "sent" && can(user, "outbox") && <button onClick={() => {
+            forwardRequest.current = null;
+            setForwarding(!forwarding);
+          }}>{forwarding ? "Cancel forward" : "Forward message"}</button>}
+          {forwarding && <form onSubmit={async e => {
+            e.preventDefault();
+            const values = new FormData(e.currentTarget);
+            const path = `/outbox/${current.id}/forward`;
+            const payload = {
+              recipient_email: String(values.get("recipient_email") ?? "").trim().toLowerCase(),
+              note: String(values.get("note") ?? "").trim(),
+            };
+            const signature = JSON.stringify({ path, ...payload });
+            if (forwardRequest.current?.signature !== signature) {
+              forwardRequest.current = { signature, id: requestId() };
+            }
+            try {
+              await action.mutateAsync({ path, body: { ...payload, request_id: forwardRequest.current.id } });
+              setForwardNotice("Forward queued in the sandbox outbox.");
+              setForwarding(false);
+              setSelected(null);
+            } catch {}
+          }}>
             <Field label="Forward to"><input name="recipient_email" type="email" required placeholder="registration@example.com" /></Field>
             <Field label="Note (optional)"><textarea name="note" rows={3} /></Field>
             <p className="caption">The original message and its attachments will be included. Delivery stays in the sandbox.</p>

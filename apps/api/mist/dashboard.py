@@ -4,7 +4,7 @@ from sqlalchemy import select, func
 from .db import get_db, now
 from .models import Audit, Campaign, Duplicate, ImportBatch, Outbound, Ticket
 from .auth import current_user, allowed
-from .services import serialize
+from .services import audit_scope, serialize
 from .tickets import ticket_scope
 from .campaigns import outbox_scope
 
@@ -73,24 +73,9 @@ def dashboard(user=Depends(current_user), db=Depends(get_db)):
         recent = [
             serialize(a)
             for a in db.scalars(
-                select(Audit).order_by(Audit.created_at.desc()).limit(8)
+                audit_scope(user).order_by(Audit.created_at.desc()).limit(8)
             )
         ]
-        if (
-            user.role == "technology_administrator"
-            and "private_tickets" not in user.permissions
-        ):
-            for a in recent:
-                if a["entity_type"] in {
-                    "tickets",
-                    "ticket_messages",
-                    "ticket_internal_notes",
-                }:
-                    a["summary"], a["before_data"], a["after_data"] = (
-                        "Ticket action (content restricted)",
-                        None,
-                        None,
-                    )
     latest = (
         db.scalar(select(ImportBatch).order_by(ImportBatch.created_at.desc()).limit(1))
         if allowed(user, "imports")

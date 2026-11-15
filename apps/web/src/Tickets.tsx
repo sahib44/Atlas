@@ -257,6 +257,7 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
   const [localError, setLocalError] = useState<unknown>();
   const sendRequest = useRef<{ signature: string; id: string } | null>(null);
   const reviewRequest = useRef<{ signature: string; id: string } | null>(null);
+  const forwardRequest = useRef<{ signature: string; id: string } | null>(null);
   const isChair = can(user, "ticket_approve");
   const linkedDraft = searchParams.get("draft");
   const loadedPage = messages.data?.page;
@@ -341,6 +342,7 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
   const simpleStatus = changingStatus && ["in_progress", "closed"].includes(targetStatus);
 
   function openForward(message: Row) {
+    forwardRequest.current = null;
     action.reset();
     setNotice("");
     setForwarding(message);
@@ -471,8 +473,13 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
       <form onSubmit={async event => {
         event.preventDefault();
         const fd = new FormData(event.currentTarget);
+        const path = `/tickets/${id}/messages/${forwarding.id}/forward`;
+        const payload = {
+          recipient_email: String(fd.get("recipient_email") ?? "").trim().toLowerCase(),
+          note: String(fd.get("note") ?? "").trim(),
+        };
         try {
-          await action.mutateAsync({ path: `/tickets/${id}/messages/${forwarding.id}/forward`, body: { recipient_email: fd.get("recipient_email"), note: fd.get("note") } });
+          await action.mutateAsync({ path, body: { ...payload, request_id: requestKey(forwardRequest, { path, ...payload }) } });
           setForwarding(null); setNotice("Forward queued in the sandbox outbox.");
         } catch {}
       }}>

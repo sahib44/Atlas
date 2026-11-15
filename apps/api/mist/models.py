@@ -96,6 +96,11 @@ class Judge(Record, Base):
     updated_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
 
 
+class RetainedSuppression(Base):
+    __tablename__ = "retained_email_suppressions"
+    email: Mapped[str] = mapped_column(String(254), primary_key=True)
+
+
 class JudgeQualification(Base):
     __tablename__ = "judge_qualifications"
     judge_id: Mapped[uuid.UUID] = mapped_column(
@@ -296,6 +301,15 @@ class Campaign(Record, Base):
     pilot_competition_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("pilot_competitions.id"), index=True
     )
+
+
+class CampaignCreation(Base):
+    __tablename__ = "campaign_creation_requests"
+    actor_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    request_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
+    campaign_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("campaigns.id", ondelete="CASCADE"))
+    signature: Mapped[str] = mapped_column(String(64))
+    excluded: Mapped[list] = mapped_column(JSONB)
 
 
 class CampaignAttachment(Record, Base):

@@ -1,4 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { createContext, useContext } from "react";
+
+export const SessionScope = createContext("");
+
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+export function isAccessError(error: unknown) {
+  return error instanceof ApiError && (error.status === 401 || error.status === 403);
+}
 export type Row = { id: string; [key: string]: any };
 export type Page = {
   items: Row[];
@@ -37,20 +50,22 @@ export async function api<T = any>(
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    throw new Error(
+    throw new ApiError(
       error.detail?.message || `Request failed (${response.status})`,
+      response.status,
     );
   }
   return response.json();
 }
 export function useData<T = any>(path: string, enabled = true) {
+  const scope = useContext(SessionScope);
   return useQuery<T>({
-    queryKey: [path],
+    queryKey: [path, scope],
     queryFn: () => api<T>(path),
     enabled,
     retry: false,
     refetchInterval:
-      ["/recruitment", "/outbox", "/campaigns", "/notifications", "/conversations", "/competitions", "/judge-directory", "/dashboard", "/tickets"].some(prefix => path.startsWith(prefix))
+      ["/auth/me", "/audit-events", "/recruitment", "/outbox", "/campaigns", "/notifications", "/conversations", "/competitions", "/judge-directory", "/dashboard", "/tickets"].some(prefix => path.startsWith(prefix))
         ? 3000
         : false,
   });

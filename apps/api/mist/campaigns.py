@@ -1,6 +1,8 @@
 from uuid import UUID, uuid4
 from urllib.parse import quote
+import hashlib
 import io
+import json
 import zipfile
 from fastapi import APIRouter, Depends, Query, File, UploadFile, Response
 from sqlalchemy import select, func
@@ -8,9 +10,10 @@ from .db import get_db, now
 from .assignments import lock_assignments
 from .recruitment import contact_suppressed, email_contacts, outreach_block
 from .models import *
-from .schemas import CampaignIn, ForwardIn, ObjectView, Page, Failure
+from .schemas import CampaignIn, ObjectView, Page, Failure
 from .auth import require, current_user, allowed, fail, COMPETITIONS_ROLES
 from .services import *
+from .ticket_flow import ForwardRequest, check_forward_recipient, forward_request, text_value
 
 router = APIRouter(prefix="/api")
 MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
@@ -83,6 +86,16 @@ def campaigns(
 @router.post("/campaigns", response_model=ObjectView)
 def create(data: CampaignIn, user=Depends(require("campaigns")), db=Depends(get_db)):
     lock_assignments(db)
+    if data.request_id:
+        payload = data.model_dump(mode="json", exclude={"request_id"})
+        signature = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        previous = db.get(CampaignCreation, (user.id, data.request_id))
+        if previous:
+            if previous.signature != signature:
+                fail("request_reused", "This request ID was already used for a different campaign.", 409)
+            campaign = get(db, Campaign, previous.campaign_id)
+            count = db.scalar(select(func.count()).select_from(Recipient).where(Recipient.campaign_id == campaign.id))
+            return {**serialize(campaign), "recipient_count": count, "excluded": previous.excluded}
     if any(recipient.add_to_directory for recipient in data.recipients):
         lock_contact_writes(db)
     render_template(data.subject_template, {})
@@ -142,6 +155,9 @@ def create(data: CampaignIn, user=Depends(require("campaigns")), db=Depends(get_
         db.add(Recipient(campaign_id=campaign.id, judge_id=judge.id if judge else None, recipient_name=name, recipient_email=address, rendered_subject=render_template(data.subject_template, values), rendered_body=render_template(data.body_template, values)))
     if not seen:
         fail("no_recipients", "; ".join(dict.fromkeys(item["reason"] for item in excluded)) if excluded else "Choose a contact or enter a valid email address.")
+    if data.request_id:
+        db.add(CampaignCreation(actor_id=user.id, request_id=data.request_id, campaign_id=campaign.id,
+                                signature=signature, excluded=excluded))
     audit(db, user, "campaign.created", campaign, f"Created campaign with {len(seen)} recipients")
     db.commit()
     return {**serialize(campaign), "recipient_count": len(seen), "excluded": excluded}
@@ -408,7 +424,7 @@ def download_outbox_attachment(id: UUID, attachment_id: UUID, user=Depends(requi
 
 
 @router.post("/outbox/{id}/forward", response_model=ObjectView)
-def forward_message(id: UUID, data: ForwardIn, user=Depends(require("outbox")), db=Depends(get_db)):
+def forward_message(id: UUID, data: ForwardRequest, user=Depends(require("outbox")), db=Depends(get_db)):
     lock_assignments(db)
     original = db.scalar(outbox_scope(user).where(Outbound.id == id))
     if not original or original.status != "sent":
@@ -416,22 +432,26 @@ def forward_message(id: UUID, data: ForwardIn, user=Depends(require("outbox")), 
     address = contact_email(data.recipient_email)
     ticket = get(db, Ticket, original.related_ticket_id) if original.related_ticket_id else None
     if ticket:
-        if address == ticket.requester_email and not allowed(user, "ticket_approve"):
-            fail("chair_approval_required", "Use the approved public reply flow to email this requester.", 403)
+        check_forward_recipient(db, ticket, user, address)
     campaign_id = source_campaign_id(db, original)
+    note = text_value(data.note)
+    key, existing = forward_request(db, "forward", user.id, data.request_id, original.id, address, note)
+    if existing:
+        if campaign_id is not None and existing.status == "cancelled" and existing.last_error == "Do not contact":
+            fail("outreach_blocked", "This recipient is marked Do not contact.", 409)
+        return {**serialize(existing), "attachments": attachments_for(db, campaign_id)}
     suppressed = campaign_id is not None and contact_suppressed(db, address)
     if not suppressed:
         blocked = outreach_block(db, None, address)
         if blocked:
             fail("outreach_blocked", blocked, 409)
-    note = clean(data.note).strip()
     subject = original.subject if original.subject.lower().startswith("fwd:") else f"Fwd: {original.subject}"
     body = f"{note}\n\n" if note else ""
     body += f"---------- Forwarded message ----------\nTo: {original.recipient_email}\nSubject: {original.subject}\n\n{original.body_text}"
     forwarded = Outbound(
         recipient_email=address, recipient_name=address, subject=subject, body_text=body,
         related_ticket_id=original.related_ticket_id,
-        forwarded_from_id=original.id, idempotency_key=f"forward:{uuid4()}",
+        forwarded_from_id=original.id, idempotency_key=key,
         status="cancelled" if suppressed else "queued",
         last_error="Do not contact" if suppressed else "",
     )

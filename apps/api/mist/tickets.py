@@ -1,12 +1,11 @@
 from datetime import timedelta
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid5
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select, or_, update
 from .db import get_db, now
 from .models import *
 from .schemas import (
     TicketIn,
-    ForwardIn,
     TicketStatus,
     TicketDraftIn,
     Content,
@@ -18,7 +17,20 @@ from .auth import current_user, allowed, fail
 from .services import *
 
 router = APIRouter(prefix="/api")
-from .ticket_flow import TRANSITIONS, STATUSES, apply_status_action, text_value, changed, mark_ticket_notifications, supersede_drafts, consume_approval
+from .ticket_flow import (
+    TRANSITIONS,
+    STATUSES,
+    ForwardRequest,
+    apply_status_action,
+    changed,
+    check_forward_recipient,
+    consume_approval,
+    current_approval,
+    forward_request,
+    supersede_drafts,
+    text_value,
+    ticket_approver,
+)
 
 
 class TicketPage(Page):
@@ -176,9 +188,14 @@ def ticket_drafts(id: UUID, user=Depends(ticket_user), db=Depends(get_db)):
     stmt = select(TicketDraft).where(TicketDraft.ticket_id == id)
     if not allowed(user, "ticket_approve"):
         stmt = stmt.where(TicketDraft.created_by == user.id)
+
     def view(draft):
         author = db.get(User, draft.created_by)
-        return {**serialize(draft), "author_name": author.full_name if author else "Organizer"}
+        data = serialize(draft)
+        if draft.status == "approved" and not current_approval(db, draft):
+            data["status"] = "superseded"
+        return {**data, "author_name": author.full_name if author else "Organizer"}
+
     return page(db, stmt.order_by(TicketDraft.created_at.desc(), TicketDraft.id.desc()), 1, 100, view)
 
 
@@ -220,10 +237,14 @@ def approve_ticket_draft(id: UUID, draft_id: UUID, user=Depends(ticket_user), db
     draft = get(db, TicketDraft, draft_id, True)
     if draft.ticket_id != id:
         fail("not_found", "Draft not found in this ticket.", 404)
-    if draft.status == "approved":
-        return serialize(draft)
-    if draft.status != "pending_approval" or draft.base_version != ticket.version:
+    if not ticket_approver(db, user.id, lock=True):
+        fail("forbidden", "Only the competitions chair or a director can approve ticket drafts.", 403)
+    if draft.base_version != ticket.version or draft.status not in {"pending_approval", "approved"}:
         fail("stale_draft", "This draft or ticket changed. Ask the head to submit a fresh draft.", 409)
+    if draft.status == "approved":
+        if not current_approval(db, draft, lock=True):
+            fail("stale_draft", "This approval is no longer valid. Ask the head to submit a fresh draft.", 409)
+        return serialize(draft)
     draft.status, draft.approved_by, draft.approved_at = "approved", user.id, now()
     db.execute(update(Notification).where(Notification.draft_id == draft.id).values(read_at=now()))
     from .inbox import notify
@@ -323,18 +344,20 @@ def note(id: UUID, data: Content, user=Depends(ticket_user), db=Depends(get_db))
 
 
 @router.post("/tickets/{id}/messages/{message_id}/forward", response_model=ObjectView)
-def forward_ticket_message(id: UUID, message_id: UUID, data: ForwardIn, user=Depends(ticket_user), db=Depends(get_db)):
+def forward_ticket_message(id: UUID, message_id: UUID, data: ForwardRequest, user=Depends(ticket_user), db=Depends(get_db)):
     ticket = ticket_get(db, user, id)
     original = get(db, TicketMessage, message_id)
     if original.ticket_id != id:
         fail("not_found", "Message not found in this ticket.", 404)
     address = contact_email(data.recipient_email)
-    if address == ticket.requester_email and not allowed(user, "ticket_approve"):
-        fail("chair_approval_required", "Use the approved public reply flow to email this requester.", 403)
-    note = clean(data.note).strip()
+    check_forward_recipient(db, ticket, user, address)
+    note = text_value(data.note)
+    key, existing = forward_request(db, "ticket-forward", user.id, data.request_id, original.id, address, note)
+    if existing:
+        return serialize(existing)
     body = (note + "\n\n") if note else ""
     body += f"---------- Forwarded message ----------\nFrom: {original.sender_name} <{original.sender_email}>\nSubject: {ticket.subject}\n\n{original.body}"
-    message = Outbound(recipient_email=address, recipient_name=address, subject=f"Fwd: {ticket.subject}", body_text=body, related_ticket_id=id, idempotency_key=f"ticket-forward:{uuid4()}")
+    message = Outbound(recipient_email=address, recipient_name=address, subject=f"Fwd: {ticket.subject}", body_text=body, related_ticket_id=id, idempotency_key=key)
     db.add(message)
     audit(db, user, "ticket.message_forwarded", ticket, "Queued a sandbox email forward", after={"recipient_email": address, "message_id": str(message_id)})
     db.commit()

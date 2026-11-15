@@ -2,11 +2,13 @@
 import hashlib
 import json
 from datetime import timedelta
-from sqlalchemy import select, update
+from uuid import UUID, uuid4
+from sqlalchemy import func, select, update
 from .auth import allowed, fail
 from .db import now
-from .models import Ticket, TicketMessage, TicketNote, TicketDraft, TicketAction, Notification, Outbound
-from .services import audit, clean, contact_email, serialize
+from .models import Audit, Ticket, TicketMessage, TicketNote, TicketDraft, TicketAction, Notification, Outbound, User
+from .schemas import ForwardIn
+from .services import audit, clean, contact_email, email, serialize
 
 STATUSES = {"new", "in_progress", "waiting_on_organizer", "waiting_on_requester", "resolved", "closed"}
 TRANSITIONS = {
@@ -21,6 +23,27 @@ TRANSITIONS = {
 
 def text_value(value):
     return clean(value).strip()
+
+
+class ForwardRequest(ForwardIn):
+    request_id: UUID | None = None
+
+
+def forward_request(db, route, actor_id, request_id, source_id, address, note):
+    if request_id is None:
+        return f"{route}:{uuid4()}", None
+
+    identity = hashlib.sha256(f"{route}:{actor_id}:{request_id}".encode()).digest()
+    # Serialize reuse of the same request, including attempts against different source messages.
+    db.execute(select(func.pg_advisory_xact_lock(int.from_bytes(identity[:8], "big", signed=True))))
+    prefix = f"{route}:{identity[:16].hex()}:"
+    # Keep the key short enough for the mock delivery receipt, which includes it.
+    intent = hashlib.sha256(json.dumps([str(source_id), address, note]).encode()).digest()
+    key = prefix + intent[:16].hex()
+    existing = db.scalar(select(Outbound).where(Outbound.idempotency_key.startswith(prefix)))
+    if existing and existing.idempotency_key != key:
+        fail("request_reused", "This forward ID was already used for a different message.", 409)
+    return key, existing
 
 
 def supersede_drafts(db, ticket, author_id=None, kind=None):
@@ -47,13 +70,42 @@ def mark_ticket_notifications(db, ticket):
         db.execute(update(Notification).where(Notification.ticket_id == ticket.id, Notification.kind == "ticket", Notification.read_at.is_(None)).values(read_at=now()))
 
 
+def ticket_approver(db, user_id, *, lock=False):
+    if lock:
+        approver = db.scalar(
+            select(User).where(User.id == user_id).with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
+    else:
+        approver = db.get(User, user_id)
+    return bool(approver and approver.is_active and allowed(approver, "ticket_approve"))
+
+
+def check_forward_recipient(db, ticket, user, address):
+    if address == email(ticket.requester_email) and not ticket_approver(db, user.id, lock=True):
+        fail("chair_approval_required", "Use the approved public reply flow to email this requester.", 403)
+
+
+def current_approval(db, draft, *, lock=False):
+    if not (draft.approved_by and draft.approved_at and ticket_approver(db, draft.approved_by, lock=lock)):
+        return False
+    revoked = db.scalar(select(Audit.id).where(
+        Audit.entity_type == "users", Audit.entity_id == str(draft.approved_by),
+        Audit.action == "user.ticket_approval_revoked", Audit.created_at >= draft.approved_at,
+    ).limit(1))
+    return revoked is None
+
+
 def consume_approval(db, ticket, user, approval_id, kind, body, target_status, resolution_note):
-    if allowed(user, "ticket_approve") and not approval_id:
-        return
     if not approval_id:
+        if allowed(user, "ticket_approve") and ticket_approver(db, user.id, lock=True):
+            return
         fail("chair_approval_required", "Request chair approval for this reply before sending.", 403)
     draft = db.scalar(select(TicketDraft).where(TicketDraft.id == approval_id).with_for_update())
-    if not draft or draft.ticket_id != ticket.id or draft.created_by != user.id or draft.status != "approved":
+    if (
+        not draft or draft.ticket_id != ticket.id or draft.created_by != user.id
+        or draft.status != "approved" or not current_approval(db, draft, lock=True)
+    ):
         fail("chair_approval_required", "This draft has not been approved for your account.", 403)
     if (draft.base_version != ticket.version or draft.kind != kind or draft.body != body or draft.target_status != target_status or draft.resolution_note != resolution_note):
         fail("approval_changed", "The reply or ticket changed. Request chair approval again.", 409)
@@ -94,6 +146,8 @@ def apply_status_action(db, ticket, data, user):
     if data.status == "resolved" and not resolution:
         fail("resolution_required", "A resolution note is required to resolve this ticket.")
     if body:
+        if data.approval_id and internal:
+            fail("approval_changed", "A private note was added to the approved reply. Save it separately.", 409)
         consume_approval(db, ticket, user, data.approval_id, "messages", body, data.status, resolution)
     elif data.approval_id:
         consume_approval(db, ticket, user, data.approval_id, "notes" if internal else "messages", internal, data.status, resolution)

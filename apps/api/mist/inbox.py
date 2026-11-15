@@ -34,7 +34,10 @@ def notification_scope(user):
     if allowed(user, "judges"):
         clauses.append(Notification.kind == "judge_reviewed")
     if allowed(user, "tickets") or "private_tickets" in user.permissions:
-        clauses.append(Notification.ticket_id.in_(ticket_scope(user).with_only_columns(Ticket.id)))
+        ticket_alerts = Notification.ticket_id.in_(ticket_scope(user).with_only_columns(Ticket.id))
+        if not allowed(user, "ticket_approve"):
+            ticket_alerts &= Notification.kind != "ticket_approval_requested"
+        clauses.append(ticket_alerts)
     return select(Notification).where(or_(*clauses) if clauses else False).where(or_(Notification.recipient_user_id.is_(None), Notification.recipient_user_id == user.id))
 
 

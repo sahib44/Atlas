@@ -8,6 +8,7 @@ from datetime import timedelta
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import and_, case, func, or_, select, update, delete, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased
 from .auth import allowed, current_user, fail, require, hasher
 from .assignments import live_assignments, lock_assignments, release_assignment
@@ -16,7 +17,7 @@ from .competition_catalog import CATEGORIES
 from .db import get_db, now
 from .models import *
 from .schemas import Page, ClearJudges, JudgeDetailsIn
-from .services import judge_views, serialize, audit
+from .services import judge_email_addresses, judge_views, lock_contact_writes, serialize, audit
 from .pilots import active_competitions, tournament_options
 from .recruitment import save_judge_details
 
@@ -148,10 +149,21 @@ def clear_directory(data: ClearJudges, user=Depends(require("delete")), db=Depen
         fail("backup_required", "Create a fresh sheet backup before clearing judges.")
     # Prevent contact edits and new assignments between validation and deletion.
     lock_assignments(db)
+    lock_contact_writes(db)
     db.execute(text("LOCK TABLE judge_contacts, pilot_nominations, pilot_competitions IN SHARE ROW EXCLUSIVE MODE"))
     if backup.fingerprint != directory_fingerprint(db):
         fail("directory_changed", "The directory changed. Cancel and restart to export a fresh backup.", 409)
     count = backup.judge_count
+    suppressed_addresses = {
+        address
+        for judge in db.scalars(select(Judge).where(Judge.do_not_contact, Judge.merged_into_id.is_(None)))
+        for address in judge_email_addresses(judge)
+    }
+    if suppressed_addresses:
+        db.execute(
+            insert(RetainedSuppression).on_conflict_do_nothing(),
+            [{"email": address} for address in sorted(suppressed_addresses)],
+        )
     for assignment in db.scalars(live_assignments()):
         release_assignment(db, assignment, user, "directory_cleared")
     db.execute(update(Recipient).values(judge_id=None))
@@ -163,7 +175,8 @@ def clear_directory(data: ClearJudges, user=Depends(require("delete")), db=Depen
     db.execute(update(Judge).values(merged_into_id=None))
     db.execute(delete(Judge))
     backup.cleared_at = now()
-    audit(db, user, "judges.cleared", backup, f"Cleared {count} judge contacts after saving sheet backup", after={"backup_id": str(backup.id), "judge_count": count})
+    audit(db, user, "judges.cleared", backup, f"Cleared {count} judge contacts after saving sheet backup",
+          after={"backup_id": str(backup.id), "judge_count": count, "suppressed_address_count": len(suppressed_addresses)})
     db.commit()
     return {"cleared": count, "backup_url": f"/api/judge-directory/backups/{backup.id}"}
 

@@ -223,7 +223,8 @@ export function Dashboard() {
 export function AuditPage() {
   const [params, setParams] = useSearchParams();
   const query = useData<Page>("/audit-events?" + params);
-  const [selected, setSelected] = useState<Row | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const event = query.data?.items.find(row => row.id === selected);
   return (
     <>
       <Heading
@@ -260,7 +261,7 @@ export function AuditPage() {
                   <td>{r.summary}</td>
                   <td>{date(r.created_at)}</td>
                   <td>
-                    <button onClick={() => setSelected(r)}>Inspect</button>
+                    <button onClick={() => setSelected(r.id)}>Inspect</button>
                   </td>
                 </tr>
               ))}
@@ -276,9 +277,9 @@ export function AuditPage() {
           />
         </div>
       )}
-      {selected && (
+      {event && (
         <Modal title="Audit event" onClose={() => setSelected(null)}>
-          <JsonDetails data={selected} />
+          <JsonDetails data={event} />
         </Modal>
       )}
     </>
