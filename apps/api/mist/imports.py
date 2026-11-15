@@ -343,6 +343,8 @@ def commit(
                             "Earlier row was skipped or invalid; select a different merge target.",
                         )
                     target = get(db, Judge, target_id, True)
+                    if target.merged_into_id:
+                        fail("invalid_judge", "Select the surviving contact before merging the import row.", 409)
                     decisions = {
                         k: v
                         for k, v in row.field_decisions.items()

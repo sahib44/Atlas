@@ -12,7 +12,7 @@ from sqlalchemy import select, or_, and_
 from .db import SessionLocal, now
 from .models import Outbound, Recipient, Campaign, Judge, PilotCompetition, PilotNomination, Ticket, TicketMessage
 from .assignments import lock_assignments
-from .services import contact_email, audit
+from .services import contact_email, audit, lock_contact_writes
 
 log = logging.getLogger("mist.worker")
 
@@ -75,10 +75,13 @@ def deliver(db, id, worker_id):
     initial = db.get(Outbound, id)
     if not initial:
         return
-    ticket = db.scalar(select(Ticket).where(Ticket.id == initial.related_ticket_id).with_for_update()) if initial.related_ticket_id else None
     campaign, rec = None, None
     if initial.related_campaign_recipient_id or initial.forwarded_from_id:
         lock_assignments(db)
+    if initial.related_campaign_recipient_id or (initial.forwarded_from_id and not initial.related_ticket_id):
+        # Keep newly committed contact preferences visible through the provider call.
+        lock_contact_writes(db)
+    ticket = db.scalar(select(Ticket).where(Ticket.id == initial.related_ticket_id).with_for_update()) if initial.related_ticket_id else None
     if initial.related_campaign_recipient_id:
         rec = db.get(Recipient, initial.related_campaign_recipient_id)
         campaign = db.scalar(
@@ -94,21 +97,39 @@ def deliver(db, id, worker_id):
         db.rollback()
         return
     judge = db.get(Judge, rec.judge_id) if rec and rec.judge_id else None
+    merged_contact = judge is not None and judge.merged_into_id is not None
     blocked = ""
+    suppressed = False
     if (campaign and campaign.status != "cancelled") or msg.forwarded_from_id:
-        from .recruitment import outreach_block
+        from .recruitment import contact_suppressed, outreach_block
+
+        campaign_email = campaign is not None
+        if msg.forwarded_from_id and not campaign_email and not msg.related_ticket_id:
+            from .campaigns import source_campaign_id
+
+            campaign_email = source_campaign_id(db, msg) is not None
         competition = db.get(PilotCompetition, campaign.pilot_competition_id) if campaign and campaign.pilot_competition_id else None
-        blocked = outreach_block(db, competition, msg.recipient_email, rec.judge_id if rec else None,
-                                 campaign.allow_declined_outreach if campaign else False, campaign.event_year if campaign else None)
-    if blocked or (campaign and campaign.status == "cancelled") or (
-        judge and (judge.do_not_contact or judge.merged_into_id)
-    ):
-        msg.status, msg.last_error = (
-            "cancelled",
-            blocked or "Campaign cancelled or contact suppressed",
-        )
+        judge_id = rec.judge_id if rec else None
+        suppression_judge_id = None if merged_contact else judge_id
+        suppressed = campaign_email and contact_suppressed(db, msg.recipient_email, suppression_judge_id)
+        if not suppressed:
+            blocked = outreach_block(db, competition, msg.recipient_email, judge_id,
+                                     campaign.allow_declined_outreach if campaign else False, campaign.event_year if campaign else None)
+    if suppressed or blocked or (campaign and campaign.status == "cancelled") or merged_contact:
+        msg.status = "cancelled"
+        if suppressed:
+            msg.last_error = "Do not contact"
+        elif merged_contact:
+            msg.last_error = "Contact was merged"
+        else:
+            msg.last_error = blocked or "Campaign cancelled"
         if rec:
             rec.status, rec.failure_reason = "cancelled", msg.last_error
+        if suppressed:
+            audit(
+                db, None, "message.delivery_cancelled", msg, f"Sandbox delivery cancelled: {msg.last_error}",
+                after={"status": msg.status, "reason": msg.last_error},
+            )
     else:
         msg.attempt_count += 1
         try:

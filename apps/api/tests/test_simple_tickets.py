@@ -3,6 +3,8 @@ from sqlalchemy import select
 from mist.db import SessionLocal
 from mist.models import Ticket, User
 from mist.auth import hasher
+from mist.worker import run_once
+from test_ticket_flow import login
 
 
 def ok(response):
@@ -27,17 +29,50 @@ def test_ticket_form_and_api_only_need_sender_and_message(director):
 
 
 def test_forward_public_ticket_message_excludes_private_notes(director):
+    for address in ("registration@example.org", "organizer@example.org"):
+        ok(director.post("/api/judges", json={
+            "display_name": "Sample Ticket Recipient", "primary_email": address,
+            "do_not_contact": True,
+        }))
     ticket = ok(new_ticket(director))
     ok(director.post(f"/api/tickets/{ticket['id']}/notes", json={"body": "Keep this private", "request_id": str(uuid4())}))
     original = ok(director.get(f"/api/tickets/{ticket['id']}/messages"))["items"][0]
     result = ok(director.post(f"/api/tickets/{ticket['id']}/messages/{original['id']}/forward", json={"recipient_email": "registration@example.org", "note": "Can your team help?"}))
     assert result["recipient_email"] == "registration@example.org"
-    assert "Public original email" in result["body_text"]
-    assert "Can your team help?" in result["body_text"]
-    assert "Keep this private" not in result["body_text"]
+    assert run_once("ticket-forward-dnc-test")
+
+    forward_url = f"/api/outbox/{result['id']}/forward"
+    competitions = ok(director.get("/api/competitions"))["items"]
+    pending_contact = "pending-ticket-forward@example.org"
+    ok(director.post("/api/recruitment", json={
+        "competition_id": competitions[0]["id"], "name": "Pending Sample Judge", "email": pending_contact,
+        "qualifications": "Has judged youth arts competitions.",
+    }))
+    blocked = director.post(forward_url, json={"recipient_email": pending_contact})
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["code"] == "outreach_blocked"
+
+    forwarded = ok(director.post(forward_url, json={"recipient_email": " Organizer@EXAMPLE.ORG "}))
+    assert forwarded["recipient_email"] == "organizer@example.org"
+    assert forwarded["forwarded_from_id"] == result["id"]
+    assert run_once("ticket-forward-dnc-test")
+
+    messages = ok(director.get("/api/outbox", params={"ticket_id": ticket["id"]}))["items"]
+    assert {message["id"] for message in messages} == {result["id"], forwarded["id"]}
+    for message in messages:
+        assert message["related_ticket_id"] == ticket["id"]
+        assert message["status"] == "sent"
+        assert message["provider_message_id"].startswith("mock-")
+        assert "Public original email" in message["body_text"]
+        assert "Can your team help?" in message["body_text"]
+        assert "Keep this private" not in message["body_text"]
+
     other = ok(new_ticket(director, subject="Another email"))
     assert director.post(f"/api/tickets/{other['id']}/messages/{original['id']}/forward", json={"recipient_email": "registration@example.org"}).status_code == 404
     assert ok(director.get(f"/api/tickets/{ticket['id']}"))["status"] == "new"
+    login(director, "tech")
+    assert ok(director.get("/api/outbox", params={"ticket_id": ticket["id"]}))["total"] == 0
+    assert director.post(forward_url, json={"recipient_email": "another@example.org"}).status_code == 400
 
 
 def test_retired_support_account_cannot_sign_in_even_if_active(client):

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, File, UploadFile, Response
 from sqlalchemy import select, func
 from .db import get_db, now
 from .assignments import lock_assignments
-from .recruitment import email_contacts, outreach_block
+from .recruitment import contact_suppressed, email_contacts, outreach_block
 from .models import *
 from .schemas import CampaignIn, ForwardIn, ObjectView, Page, Failure
 from .auth import require, current_user, allowed, fail, COMPETITIONS_ROLES
@@ -83,6 +83,8 @@ def campaigns(
 @router.post("/campaigns", response_model=ObjectView)
 def create(data: CampaignIn, user=Depends(require("campaigns")), db=Depends(get_db)):
     lock_assignments(db)
+    if any(recipient.add_to_directory for recipient in data.recipients):
+        lock_contact_writes(db)
     render_template(data.subject_template, {})
     render_template(data.body_template, {})
     if set(data.variables) - TEMPLATE_VARS:
@@ -99,6 +101,7 @@ def create(data: CampaignIn, user=Depends(require("campaigns")), db=Depends(get_
         fail("competition_required", "Manual follow-up to a declined candidate requires their competition.")
     if data.event_year and pilot and data.event_year != pilot.event_year:
         fail("wrong_tournament", "Select the competition's tournament.")
+    excluded = []
     contacts = [(judge, judge.primary_email or judge.alternate_email, judge.display_name) for judge in judges]
     for incoming in data.recipients:
         address = contact_email(incoming.email)
@@ -109,19 +112,24 @@ def create(data: CampaignIn, user=Depends(require("campaigns")), db=Depends(get_
         judge = matches[0] if matches else None
         name = clean(incoming.name).strip() or (judge.display_name if judge else address)
         if not judge and incoming.add_to_directory:
+            if contact_suppressed(db, address):
+                excluded.append({"judge_name": name, "reason": "Do not contact"})
+                continue
             first, _, last = name.partition(" ")
             judge = write_judge(db, {"display_name": name, "first_name": first, "last_name": last, "primary_email": address}, user, source="campaign recipient")
         contacts.append((judge, address, name))
     campaign = Campaign(name=clean(data.name), subject_template=clean(data.subject_template), body_template=clean(data.body_template), variables=data.variables, created_by=user.id, pilot_competition_id=pilot.id if pilot else None, allow_declined_outreach=data.allow_declined_outreach, event_year=pilot.event_year if pilot else data.event_year)
     db.add(campaign)
     db.flush()
-    excluded, seen = [], set()
+    seen = set()
     for judge, raw_address, name in contacts:
-        reason = "Do not contact" if judge and judge.do_not_contact else ""
         try:
             address = contact_email(raw_address)
         except Exception:
             address, reason = "", "Missing or invalid email"
+        else:
+            judge_id = judge.id if judge else None
+            reason = "Do not contact" if contact_suppressed(db, address, judge_id) else ""
         if address and not reason:
             reason = outreach_block(db, pilot, address, judge.id if judge else None, data.allow_declined_outreach, campaign.event_year)
         if address in seen:
@@ -282,28 +290,31 @@ def transition(
             competition = db.get(PilotCompetition, campaign.pilot_competition_id) if campaign.pilot_competition_id else None
             for rec in db.scalars(select(Recipient).where(Recipient.campaign_id == id)):
                 judge = db.get(Judge, rec.judge_id) if rec.judge_id else None
-                if judge and (judge.do_not_contact or judge.merged_into_id):
-                    rec.status, rec.failure_reason = (
-                        "cancelled",
-                        "Contact is now suppressed or merged",
-                    )
+                if judge and judge.merged_into_id:
+                    rec.status, rec.failure_reason = "cancelled", "Contact was merged"
                     continue
                 contact_email(rec.recipient_email)
-                blocked = outreach_block(db, competition, rec.recipient_email, rec.judge_id,
-                                         campaign.allow_declined_outreach, campaign.event_year)
-                if blocked:
-                    fail("outreach_blocked", f"{rec.recipient_name}: {blocked}. Review the recipients before sending.", 409)
-                db.add(
-                    Outbound(
-                        recipient_email=rec.recipient_email,
-                        recipient_name=rec.recipient_name or (judge.display_name if judge else rec.recipient_email),
-                        subject=rec.rendered_subject,
-                        body_text=rec.rendered_body,
-                        related_campaign_recipient_id=rec.id,
-                        idempotency_key=f"campaign:{rec.id}",
-                    )
+                suppressed = contact_suppressed(db, rec.recipient_email, rec.judge_id)
+                if not suppressed:
+                    blocked = outreach_block(db, competition, rec.recipient_email, rec.judge_id,
+                                             campaign.allow_declined_outreach, campaign.event_year)
+                    if blocked:
+                        fail("outreach_blocked", f"{rec.recipient_name}: {blocked}. Review the recipients before sending.", 409)
+                message = Outbound(
+                    recipient_email=rec.recipient_email,
+                    recipient_name=rec.recipient_name or (judge.display_name if judge else rec.recipient_email),
+                    subject=rec.rendered_subject,
+                    body_text=rec.rendered_body,
+                    related_campaign_recipient_id=rec.id,
+                    idempotency_key=f"campaign:{rec.id}",
+                    status="cancelled" if suppressed else "queued",
+                    last_error="Do not contact" if suppressed else "",
                 )
-                rec.status = "queued"
+                db.add(message)
+                rec.status, rec.failure_reason = message.status, message.last_error
+                if suppressed:
+                    audit(db, user, "message.delivery_cancelled", message, "Sandbox delivery cancelled: Do not contact",
+                          after={"status": message.status, "reason": message.last_error})
             campaign.status = "queued"
             db.flush()
             from .worker import aggregate
@@ -407,9 +418,12 @@ def forward_message(id: UUID, data: ForwardIn, user=Depends(require("outbox")), 
     if ticket:
         if address == ticket.requester_email and not allowed(user, "ticket_approve"):
             fail("chair_approval_required", "Use the approved public reply flow to email this requester.", 403)
-    blocked = outreach_block(db, None, address)
-    if blocked:
-        fail("outreach_blocked", blocked, 409)
+    campaign_id = source_campaign_id(db, original)
+    suppressed = campaign_id is not None and contact_suppressed(db, address)
+    if not suppressed:
+        blocked = outreach_block(db, None, address)
+        if blocked:
+            fail("outreach_blocked", blocked, 409)
     note = clean(data.note).strip()
     subject = original.subject if original.subject.lower().startswith("fwd:") else f"Fwd: {original.subject}"
     body = f"{note}\n\n" if note else ""
@@ -418,12 +432,19 @@ def forward_message(id: UUID, data: ForwardIn, user=Depends(require("outbox")), 
         recipient_email=address, recipient_name=address, subject=subject, body_text=body,
         related_ticket_id=original.related_ticket_id,
         forwarded_from_id=original.id, idempotency_key=f"forward:{uuid4()}",
+        status="cancelled" if suppressed else "queued",
+        last_error="Do not contact" if suppressed else "",
     )
     db.add(forwarded)
+    if suppressed:
+        audit(db, user, "message.delivery_cancelled", forwarded, "Sandbox forward cancelled: Do not contact",
+              after={"status": forwarded.status, "reason": forwarded.last_error, "forwarded_from_id": str(id)})
+        db.commit()
+        fail("outreach_blocked", "This recipient is marked Do not contact.", 409)
     audit(db, user, "message.forwarded", ticket if ticket else forwarded,
           "Queued a sandbox forward", after={"forwarded_from_id": str(id), "recipient_email": address})
     db.commit()
-    return {**serialize(forwarded), "attachments": attachments_for(db, source_campaign_id(db, original))}
+    return {**serialize(forwarded), "attachments": attachments_for(db, campaign_id)}
 
 
 @router.post("/outbox/{id}/failure", response_model=ObjectView)

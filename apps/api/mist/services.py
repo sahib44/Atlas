@@ -216,8 +216,12 @@ def add_relations(db, judge, data):
             db.add(Engagement(judge_id=judge.id, event_year=year, outcome="served"))
 
 
-def write_judge(db, data, actor, existing=None, source="manual"):
+def lock_contact_writes(db):
     db.execute(select(func.pg_advisory_xact_lock(410261)))
+
+
+def write_judge(db, data, actor, existing=None, source="manual"):
+    lock_contact_writes(db)
     judge = existing or Judge(created_by=actor.id, source=source)
     before = serialize(judge) if existing else None
     for key in FIELDS:
@@ -229,6 +233,11 @@ def write_judge(db, data, actor, existing=None, source="manual"):
         elif isinstance(value, str):
             value = clean(value)
         setattr(judge, key, value)
+    if before and judge.do_not_contact:
+        previous_addresses = {before["primary_email"], before["alternate_email"]}
+        removed_addresses = previous_addresses - {"", judge.primary_email, judge.alternate_email}
+        if removed_addresses:
+            judge.preserved_emails = sorted(set(judge.preserved_emails) | removed_addresses)
     judge.updated_by = actor.id
     db.add(judge)
     db.flush()

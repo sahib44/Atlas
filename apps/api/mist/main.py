@@ -300,7 +300,14 @@ def judge_detail(id: UUID, user=Depends(current_user), db=Depends(get_db)):
 def judge_update(
     id: UUID, data: JudgeIn, user=Depends(require("judges")), db=Depends(get_db)
 ):
-    judge = write_judge(db, data.model_dump(), user, get(db, Judge, id, True))
+    lock_contact_writes(db)
+    values = data.model_dump()
+    if "do_not_contact" not in data.model_fields_set:
+        values.pop("do_not_contact")
+    judge = get(db, Judge, id, True)
+    if judge.merged_into_id:
+        fail("invalid_judge", "Use the surviving contact before editing this judge.", 409)
+    judge = write_judge(db, values, user, judge)
     db.commit()
     return judge_views(db, [judge])[0]
 
@@ -312,6 +319,7 @@ def merge_contacts(
     if not data.confirmed or id == data.merged_judge_id:
         fail("invalid_merge", "Confirm a merge of two different contacts.")
     lock_assignments(db)
+    lock_contact_writes(db)
     # Consistent order prevents competing merges from deadlocking.
     locked = {
         j.id: j

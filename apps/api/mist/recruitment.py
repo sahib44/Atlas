@@ -13,9 +13,16 @@ from .db import get_db, now
 from .inbox import notify
 from .models import Audit, Engagement, Judge, Notification, OfficialJudgeAssignment, PilotCompetition, PilotNomination, User
 from .schemas import JudgeDetailsIn, OfficialAssignmentIn, Page, PilotStatusIn, RecruitmentIn, RecruitmentReview
-from .services import audit, clean, contact_email, get, serialize, write_judge
+from .services import audit, clean, contact_email, email, get, serialize, write_judge
 
 router = APIRouter(prefix="/api/recruitment")
+
+# Match Python's strip() when comparing previously stored addresses in PostgreSQL.
+EMAIL_WHITESPACE = (
+    " \t\n\r\v\f\x1c\x1d\x1e\x1f\x85\xa0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
 
 
 def email_contacts(address):
@@ -23,6 +30,27 @@ def email_contacts(address):
         Judge.primary_email == address, Judge.alternate_email == address,
         Judge.preserved_emails.contains([address]),
     ))
+
+
+def contact_suppressed(db, address, judge_id=None):
+    """Check current preferences for the linked contact and actual destination."""
+    address = email(address)
+    def matches(column):
+        # Contact writes normalize addresses. Handle case and whitespace in older values.
+        return func.lower(func.btrim(column, EMAIL_WHITESPACE)) == address
+
+    aliases = func.jsonb_array_elements_text(Judge.preserved_emails).table_valued("address").render_derived()
+    preserved_match = select(aliases.c.address).where(matches(aliases.c.address)).correlate(Judge).exists()
+    active_match = and_(
+        Judge.merged_into_id.is_(None),
+        or_(matches(Judge.primary_email), matches(Judge.alternate_email), preserved_match),
+    )
+    # A merge marks the former contact suppressed and preserves its emails on the survivor.
+    destination_match = active_match if address else False
+    return db.scalar(select(Judge.id).where(
+        Judge.do_not_contact,
+        or_(Judge.id == judge_id, destination_match),
+    ).limit(1)) is not None
 
 
 def recruitment_href(competition, nomination):
