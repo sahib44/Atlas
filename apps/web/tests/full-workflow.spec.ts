@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { expectReadable, selectAppearance } from "./appearance-helpers";
 import path from "node:path";
 
 test("organizer imports, reviews, campaigns, and resolves a support ticket", async ({
@@ -24,11 +25,11 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await expect(page.getByRole("navigation", { name: "Operations" })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Notifications/ })).toHaveCount(1);
   await expect.poll(() => page.locator(".sidebar .brand-symbol").evaluate((logo: HTMLImageElement) => logo.naturalWidth)).toBeGreaterThan(0);
-  await page.getByRole("button", { name: "Switch to dark mode" }).click();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await selectAppearance(page, "Purple Dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "purple-dark");
   await page.reload();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await page.getByRole("button", { name: "Switch to light mode" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "purple-dark");
+  await selectAppearance(page, "Light");
   const sidebarLogo = page.locator(".sidebar button.brand");
   await expect(sidebarLogo.locator("img")).toBeVisible();
   await sidebarLogo.click();
@@ -210,17 +211,18 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await expect(page.locator(".ticket-inline-note")).toContainText(
     "Private: organizer review completed.",
   );
-  for (const theme of ["light", "dark"]) {
-    if (theme === "dark") await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  for (const theme of ["Light", "Dark", "Purple Dark"] as const) {
+    if (theme !== "Light") await selectAppearance(page, theme);
     const note = page.locator(".ticket-inline-note");
     const mail = page.locator(".ticket-email").first();
     const surface = await mail.evaluate(element => getComputedStyle(element).backgroundColor);
     await expect.poll(() => note.evaluate(element => getComputedStyle(element).backgroundColor)).not.toBe(surface);
     await expect(note.getByText("Internal note", { exact: false })).toBeVisible();
-    await expect(page.locator(".composer.private textarea")).toBeVisible();
-    await page.screenshot({ path: `test-results/internal-notes-${theme}.png`, fullPage: true });
+    await expectReadable(note.locator("header strong"));
+    await expectReadable(page.locator(".composer.private textarea"), true);
+    if (theme !== "Dark") await page.screenshot({ path: `test-results/internal-notes-${theme === "Light" ? "light" : "dark"}.png`, fullPage: true });
   }
-  await page.getByRole("button", { name: "Switch to light mode" }).click();
+  await selectAppearance(page, "Light");
 
   expect(
     (await (await page.request.get("/api/outbox?ticket_id=" + ticketId)).json())
@@ -289,8 +291,8 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await page.getByRole("link", { name: "Overview", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Competitions", exact: true })).toBeVisible();
   await page.screenshot({ path: "test-results/dashboard-light.png", fullPage: true });
-  await page.getByRole("button", { name: "Switch to dark mode" }).click();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await selectAppearance(page, "Purple Dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "purple-dark");
   await page.screenshot({ path: "test-results/dashboard-dark.png", fullPage: true });
   await page.setViewportSize({ width: 768, height: 1024 });
   await expect(page.getByRole('link', { name: 'Judge Directory', exact: true })).not.toBeVisible();

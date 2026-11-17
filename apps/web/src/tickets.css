@@ -14,7 +14,7 @@
   --ticket-note-border: #e8d4a9;
   --ticket-note-text: #644719;
 }
-[data-theme="dark"] .tickets-workspace {
+[data-theme="purple-dark"] .tickets-workspace {
   --ticket-selected: #3c2e58;
   --ticket-new-bg: #3b3368;
   --ticket-new-text: #e3d7ff;
@@ -22,6 +22,16 @@
   --ticket-note-border: #5d4934;
   --ticket-note-text: #f0cf99;
 }
+[data-theme="dark"] .tickets-workspace {
+  --ticket-selected: var(--nav-active);
+  --ticket-new-bg: var(--pale);
+  --ticket-new-text: var(--accent);
+  --ticket-note-bg: var(--warning-bg);
+  --ticket-note-border: var(--warning-border);
+  --ticket-note-text: var(--warning-text);
+}
+[data-theme="dark"] .ticket-search { border-color: var(--control-border); }
+[data-theme="dark"] .ticket-views button[aria-pressed="true"] span { background: var(--primary); }
 .tickets-heading {
   display: flex;
   justify-content: space-between;

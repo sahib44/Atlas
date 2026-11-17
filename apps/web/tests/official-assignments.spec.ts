@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { selectAppearance } from "./appearance-helpers";
 import { addApprovedNomination, approveNomination } from "./recruitment-helpers";
 
 test("chair confirms and moves official judges while browsing tournament coverage", async ({ page }) => {
@@ -68,7 +69,7 @@ test("chair confirms and moves official judges while browsing tournament coverag
   await move.getByRole("button", { name: "Reassign judge", exact: true }).click();
   await expect(roster.getByRole("progressbar")).toHaveJSProperty("value", 1);
   await expect.poll(async () => (await read(`/competitions/${first.id}`)).confirmed_count).toBe(0);
-  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await selectAppearance(page, "Purple Dark");
   await page.screenshot({ path: "test-results/phase2-official-slots-dark.png", fullPage: true });
 
   await roster.getByRole("button", { name: "Release slot 1" }).click();

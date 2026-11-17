@@ -10,7 +10,7 @@
   --judge-green: #08732c;
   --judge-green-bg: #def4e5;
 }
-:root[data-theme="dark"] .judge-app {
+:root[data-theme="purple-dark"] .judge-app {
   --judge-line: #3c3652;
   --judge-accent: #d09bff;
   --judge-button: #7830df;
@@ -22,7 +22,19 @@
   --judge-green: #a4f2b5;
   --judge-green-bg: #204631;
 }
-:root:not([data-theme="dark"]) .judge-app:has(.directory-workspace) { --canvas: #faf8fe; --judge-pane: #fcfaff; }
+:root:not([data-theme="dark"], [data-theme="purple-dark"]) .judge-app:has(.directory-workspace) { --canvas: #faf8fe; --judge-pane: #fcfaff; }
+:root[data-theme="dark"] .judge-app {
+  --judge-line: var(--border);
+  --judge-accent: var(--accent);
+  --judge-button: var(--primary);
+  --judge-pane: var(--surface);
+  --judge-selected: var(--nav-active);
+  --judge-blue: #a1d3ff;
+  --judge-blue-bg: #243748;
+  --judge-purple-bg: var(--pale);
+  --judge-green: var(--success-text);
+  --judge-green-bg: var(--success-bg);
+}
 .judge-app { background: var(--canvas); }
 .judge-app .content { max-width: 1700px; min-width: 0; padding: clamp(12px, 1.5vw, 24px); }
 .judge-app .footer { display: none; }

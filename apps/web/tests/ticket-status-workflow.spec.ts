@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { selectAppearance } from "./appearance-helpers";
 
 test("heads request chair approval, send status replies, organize notes and return from outbox", async ({ page, browser, baseURL }) => {
   page.setDefaultTimeout(15000);
@@ -183,9 +184,9 @@ test("ticket inbox and correspondence fit desktop, tablet and phone", async ({ p
   expect(panels[0]!.x + panels[0]!.width).toBeLessThan(panels[1]!.x);
   expect(panels[1]!.x + panels[1]!.width).toBeLessThan(panels[2]!.x);
   await page.screenshot({ path: "test-results/phase4-tickets-light.png", animations: "disabled" });
-  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await selectAppearance(page, "Purple Dark");
   await page.screenshot({ path: "test-results/phase4-tickets-dark.png", animations: "disabled" });
-  await page.getByRole("button", { name: "Switch to light mode" }).click();
+  await selectAppearance(page, "Light");
 
   await inbox.getByRole("button", { name: /^Overdue/ }).click();
   await expect(inbox.getByRole("button", { name: /^Overdue/ })).toHaveAttribute("aria-pressed", "true");

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectReadable, selectAppearance } from "./appearance-helpers";
 import { approveNomination, readJson, writeJson } from "./recruitment-helpers";
 
 test("chair reviews a member's candidate from the overview before confirmation and withdrawal", async ({ page, browser, baseURL }) => {
@@ -93,7 +94,7 @@ test("chair reviews a member's candidate from the overview before confirmation a
     await expect(page.getByRole("heading", { name: "Judge Request Summary" })).toBeVisible();
     await page.setViewportSize({ width: 1536, height: 560 });
     await page.screenshot({ path: "test-results/recruitment-light.png" });
-    await page.getByRole("button", { name: "Switch to dark mode" }).click();
+    await selectAppearance(page, "Purple Dark");
     await page.screenshot({ path: "test-results/recruitment-dark.png" });
 
     await page.getByRole("button", { name: "Confirm as Judge" }).click();
@@ -127,7 +128,11 @@ test("chair reviews a member's candidate from the overview before confirmation a
     await page.getByRole("button", { name: "Nadia Sample", exact: true }).click();
     await page.setViewportSize({ width: 1752, height: 897 });
     await page.screenshot({ path: "test-results/directory-dark.png" });
-    await page.getByRole("button", { name: "Switch to light mode" }).click();
+    await selectAppearance(page, "Dark");
+    await expect(panel).toHaveCSS("background-color", "rgb(35, 35, 38)");
+    await expectReadable(panel.getByText("Confirmed Assignment", { exact: true }));
+    await expectReadable(page.getByRole("row", { name: /Nadia Sample/ }).getByRole("button", { name: "Nadia Sample", exact: true }));
+    await selectAppearance(page, "Light");
     await page.screenshot({ path: "test-results/directory-light.png" });
     await page.getByRole("button", { name: "Nadia Sample", exact: true }).click();
     await expect(panel).toHaveCount(0);

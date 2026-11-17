@@ -48,22 +48,81 @@ const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
-type Theme = "light" | "dark";
-function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
+const appearanceOptions = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "purple-dark", label: "Purple Dark", icon: Moon },
+] as const;
+type Theme = (typeof appearanceOptions)[number]["value"];
+type AppearanceProps = { theme: Theme; onChangeTheme: (theme: Theme) => void };
+
+function loadTheme(): Theme {
+  const savedAppearance = window.localStorage.getItem("mist-appearance");
+  const savedOption = appearanceOptions.find(option => option.value === savedAppearance);
+  if (savedOption) return savedOption.value;
+  return window.localStorage.getItem("mist-theme") === "dark" ? "purple-dark" : "light";
+}
+
+function AppearanceControl({ theme, onChangeTheme }: AppearanceProps) {
+  const [open, setOpen] = useState(false);
+  const control = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const currentLabel = appearanceOptions.find(option => option.value === theme)?.label;
+  useEffect(() => {
+    if (!open) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !control.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    return () => document.removeEventListener("pointerdown", closeOutside);
+  }, [open]);
   return (
-    <button
-      type="button"
-      className="theme-toggle"
-      aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-      aria-pressed={theme === "dark"}
-      title={theme === "dark" ? "Light mode" : "Dark mode"}
-      onClick={onToggle}
+    <div
+      ref={control}
+      className="appearance-control"
+      onBlur={event => {
+        if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={event => {
+        if (event.key !== "Escape" || !open) return;
+        event.stopPropagation();
+        setOpen(false);
+        trigger.current?.focus();
+      }}
     >
-      {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-    </button>
+      <button
+        ref={trigger}
+        type="button"
+        className="theme-toggle"
+        aria-label="Appearance"
+        aria-expanded={open}
+        title={`Appearance: ${currentLabel}`}
+        onClick={() => setOpen(value => !value)}
+      >
+        {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+      </button>
+      {open && (
+        <div className="appearance-options" role="group" aria-label="Theme">
+          {appearanceOptions.map(({ value, label, icon: Icon }) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={theme === value}
+              onClick={() => {
+                onChangeTheme(value);
+                setOpen(false);
+                trigger.current?.focus();
+              }}
+            >
+              <Icon size={16} aria-hidden="true" /> {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
-function Login({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: () => void }) {
+function Login({ theme, onChangeTheme }: AppearanceProps) {
   const action = useAction();
   const navigate = useNavigate();
   const form = useForm<z.infer<typeof loginSchema>>({
@@ -73,7 +132,7 @@ function Login({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: () => vo
   return (
     <div className="login-page">
       <div className="login-theme-toggle">
-        <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        <AppearanceControl theme={theme} onChangeTheme={onChangeTheme} />
       </div>
       <main className="login-card">
         <div className="login-identity">
@@ -235,12 +294,10 @@ export default function App() {
   const { pathname } = useLocation();
   const judgeWorkspace = pathname === "/recruitment" || pathname === "/judges";
   const ticketWorkspace = /^\/tickets(?:\/(?!new$)[^/]+)?$/.test(pathname);
-  const [theme, setTheme] = useState<Theme>(() =>
-    window.localStorage.getItem("mist-theme") === "dark" ? "dark" : "light",
-  );
+  const [theme, setTheme] = useState(loadTheme);
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    window.localStorage.setItem("mist-theme", theme);
+    window.localStorage.setItem("mist-appearance", theme);
   }, [theme]);
   useEffect(() => {
     window.localStorage.setItem("mist-sidebar-collapsed", String(collapsed));
@@ -251,12 +308,11 @@ export default function App() {
     desktop.addEventListener("change", closeOnDesktop);
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, []);
-  const toggleTheme = () => setTheme((current) => current === "dark" ? "light" : "dark");
   if (auth.isPending) return <Loading />;
   if (!auth.data || isAccessError(auth.error))
     return (
       <Routes>
-        <Route path="/login" element={<Login theme={theme} onToggleTheme={toggleTheme} />} />
+        <Route path="/login" element={<Login theme={theme} onChangeTheme={setTheme} />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -313,7 +369,7 @@ export default function App() {
             <div className="topbar-tools">
               <div className="sandbox" title="Sandbox email mode"><ShieldCheck size={15} /> <span>SANDBOX EMAIL MODE</span></div>
               <Notifications />
-              <ThemeToggle theme={theme} onToggle={toggleTheme} />
+              <AppearanceControl theme={theme} onChangeTheme={setTheme} />
             </div>
           </header>
           <main className="content">
