@@ -166,6 +166,10 @@ test("chair reviews a member's candidate from the overview before confirmation a
     await page.getByRole("dialog", { name: "Unconfirm judge" }).getByRole("button", { name: "Unconfirm assignment" }).click();
     await expect(panel).toHaveCount(0);
     expect((await readJson(page.request, `/competitions/${competition.id}`)).confirmed_count).toBe(0);
+    await page.goto(`/competitions/${competition.category_slug}/${competition.id}`);
+    const withdrawnNomination = page.locator(".pilot-judge").filter({ hasText: "Nadia Sample" });
+    await expect(withdrawnNomination).toContainText("Withdrawn");
+    await expect(withdrawnNomination.getByLabel("Response", { exact: true })).toBeDisabled();
     await page.goto("/recruitment?event_year=2027&view=archive");
     await expect(page.getByRole("row").filter({ hasText: "Nadia Sample" })).toContainText("Withdrawn");
     await page.getByRole("button", { name: "Nadia Sample", exact: true }).click();

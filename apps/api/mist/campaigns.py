@@ -442,7 +442,7 @@ def forward_message(id: UUID, data: ForwardRequest, user=Depends(require("outbox
         return {**serialize(existing), "attachments": attachments_for(db, campaign_id)}
     suppressed = campaign_id is not None and contact_suppressed(db, address)
     if not suppressed:
-        blocked = outreach_block(db, None, address)
+        blocked = outreach_block(db, None, address, check_identity=campaign_id is not None)
         if blocked:
             fail("outreach_blocked", blocked, 409)
     subject = original.subject if original.subject.lower().startswith("fwd:") else f"Fwd: {original.subject}"

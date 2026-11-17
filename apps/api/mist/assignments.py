@@ -1,11 +1,11 @@
 """Transactions for official judge slots and their history."""
-from sqlalchemy import func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import aliased
 
 from .auth import fail
 from .db import now
 from .models import Judge, OfficialJudgeAssignment, PilotCompetition, PilotNomination
-from .services import audit, serialize
+from .services import audit, email_address_matches, judge_email_addresses, lock_contact_writes, serialize
 
 REQUIRED_JUDGES = 3
 
@@ -20,6 +20,11 @@ def live_assignments():
     return select(OfficialJudgeAssignment).where(OfficialJudgeAssignment.released_at.is_(None))
 
 
+def contact_family(judge_id):
+    contact = aliased(Judge)
+    return select(contact.id).where(or_(contact.id == judge_id, contact.merged_into_id == judge_id)).correlate(Judge)
+
+
 def outstanding_withdrawals(judge_id):
     """A withdrawal stays in effect until the corresponding nomination is reopened."""
     contact = aliased(Judge)
@@ -29,13 +34,39 @@ def outstanding_withdrawals(judge_id):
         reopened.reopened_at > OfficialJudgeAssignment.released_at,
         func.coalesce(contact.merged_into_id, contact.id) == judge_id,
     ).correlate(OfficialJudgeAssignment, Judge).exists()
-    former = aliased(Judge)
-    contacts = select(former.id).where(or_(former.id == judge_id, former.merged_into_id == judge_id)).correlate(Judge)
     return select(OfficialJudgeAssignment.id).where(
-        OfficialJudgeAssignment.judge_id.in_(contacts),
+        OfficialJudgeAssignment.judge_id.in_(contact_family(judge_id)),
         OfficialJudgeAssignment.release_reason == "withdrawn",
         ~reopened_since,
     )
+
+
+def tournament_archive(judge_id, event_year):
+    withdrawal = outstanding_withdrawals(judge_id).where(
+        OfficialJudgeAssignment.event_year == event_year,
+    ).correlate(PilotCompetition, Judge).exists()
+    nomination, competition = aliased(PilotNomination), aliased(PilotCompetition)
+    decline = select(nomination.id).join(competition, competition.id == nomination.pilot_id).where(
+        nomination.judge_id.in_(contact_family(judge_id)), nomination.status == "declined",
+        competition.event_year == event_year,
+    ).correlate(PilotCompetition, Judge).exists()
+    return case((withdrawal, "withdrawn"), (decline, "declined"), else_="")
+
+
+def contact_has_email_conflict(db, judge, destination=None):
+    addresses = judge_email_addresses(judge)
+    conflicts = select(Judge.id).where(
+        Judge.id != judge.id, Judge.merged_into_id.is_(None), email_address_matches(addresses),
+    )
+    if destination:
+        # The caller already checks all records matching the exact destination.
+        conflicts = conflicts.where(~email_address_matches([destination]))
+    return bool(addresses and db.scalar(conflicts.limit(1)))
+
+
+def ensure_contact_unambiguous(db, judge):
+    if contact_has_email_conflict(db, judge):
+        fail("contact_conflict", "Resolve contacts that share an email address before continuing.", 409)
 
 
 def release_assignment(db, assignment, actor, reason):
@@ -49,6 +80,7 @@ def release_assignment(db, assignment, actor, reason):
 
 
 def place_assignment(db, competition, data, actor):
+    lock_contact_writes(db)
     if competition.activation_status != "active":
         fail("competition_inactive", "Only an active competition can confirm judges.", 409)
 
@@ -60,15 +92,14 @@ def place_assignment(db, competition, data, actor):
         fail("nomination_not_found", "Choose a judge nominated for this competition.", 404)
     if nomination.review_status not in {None, "approved"}:
         fail("approval_required", "The chair must approve this request before confirmation.", 409)
-    if db.scalar(outstanding_withdrawals(nomination.judge_id).where(
-        OfficialJudgeAssignment.competition_id == competition.id,
-    ).limit(1)):
-        fail("candidate_archived", "This judge withdrew from this competition.", 409)
+    if db.scalar(select(tournament_archive(nomination.judge_id, competition.event_year))):
+        fail("candidate_archived", "Reopen the withdrawn or declined request before confirming this judge for this tournament.", 409)
     if nomination.status != "accepted":
         fail("acceptance_required", "Record an Accepted response before confirming this judge.", 409)
     judge = db.get(Judge, nomination.judge_id)
     if not judge or judge.merged_into_id:
         fail("invalid_judge", "Use the active judge contact before confirming an assignment.", 409)
+    ensure_contact_unambiguous(db, judge)
 
     current = db.scalar(live_assignments().where(
         OfficialJudgeAssignment.event_year == competition.event_year,
@@ -116,6 +147,10 @@ def merge_assignment_contacts(db, survivor, other, actor):
     if conflicts:
         years = ", ".join(map(str, conflicts))
         fail("assignment_merge_conflict", f"Both contacts hold official slots in {years}. Resolve the assignments before merging.", 409)
+    for row in rows:
+        other_contact = other.id if row.judge_id == survivor.id else survivor.id
+        if db.scalar(select(tournament_archive(other_contact, row.event_year))):
+            fail("assignment_merge_conflict", "One contact holds an official slot in a tournament where the other is archived. Resolve the archive or slot before merging.", 409)
     for row in moving:
         before = serialize(row)
         row.judge_id = survivor.id

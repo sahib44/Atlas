@@ -50,6 +50,25 @@ def judge_email_addresses(judge):
     return {normalized for address in addresses if (normalized := email(address))}
 
 
+# Compare older database addresses with the same trimming as contact input.
+EMAIL_WHITESPACE = (
+    " \t\n\r\v\f\x1c\x1d\x1e\x1f\x85\xa0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
+
+
+def email_address_matches(addresses):
+    aliases = func.jsonb_array_elements_text(Judge.preserved_emails).table_valued("address").render_derived()
+    return or_(
+        func.lower(func.btrim(Judge.primary_email, EMAIL_WHITESPACE)).in_(addresses),
+        func.lower(func.btrim(Judge.alternate_email, EMAIL_WHITESPACE)).in_(addresses),
+        select(aliases.c.address).where(
+            func.lower(func.btrim(aliases.c.address, EMAIL_WHITESPACE)).in_(addresses),
+        ).correlate(Judge).exists(),
+    )
+
+
 def safe_email(value, optional=False):
     value = email(value)
     if not value and optional:
@@ -367,7 +386,7 @@ def judge_query(filters):
 def duplicate_match(incoming, existing):
     a = {email(incoming.get(k)) for k in ["primary_email", "alternate_email"]} - {""}
     b = {email(existing.get(k)) for k in ["primary_email", "alternate_email"]} - {""}
-    b.update(existing.get("preserved_emails", []))
+    b.update(email(address) for address in existing.get("preserved_emails", []) if address)
     if incoming.get("primary_email") and email(incoming["primary_email"]) == email(
         existing.get("primary_email")
     ):

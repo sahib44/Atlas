@@ -55,7 +55,7 @@ export function JudgeConversation() {
   const data = query.data;
   return <>
     <Back to="/campaigns">Campaigns</Back>
-    <Heading title={data.judge.name} description={[data.judge.email, data.judge.phone].filter(Boolean).join(" · ")}><Link className="button primary" to="/campaigns/new" state={{ judge_ids: [id] }}><Plus size={16} /> Compose email</Link></Heading>
+    <Heading title={data.judge.name} description={[data.judge.email, data.judge.phone].filter(Boolean).join(" · ")}><Link className="button primary" to="/campaigns/new" state={{ judge_ids: [data.judge.id] }}><Plus size={16} /> Compose email</Link></Heading>
     <ErrorBox error={action.error} />
     <div className="conversation-thread">{data.messages.map((message: Row) => <article key={message.id} className={`conversation-message ${message.direction}${openedUnread.has(message.id) ? " newly-opened" : ""}`}>
       <div className="message-heading"><strong>{message.direction === "incoming" ? data.judge.name : "MIST Deck"}</strong><Badge value={message.status} /><small>{date(message.created_at)}</small></div>

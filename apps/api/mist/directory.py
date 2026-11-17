@@ -11,7 +11,7 @@ from sqlalchemy import and_, case, func, or_, select, update, delete, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import aliased
 from .auth import allowed, current_user, fail, require, hasher
-from .assignments import live_assignments, lock_assignments, release_assignment
+from .assignments import contact_family, live_assignments, lock_assignments, release_assignment
 from argon2.exceptions import VerificationError
 from .competition_catalog import CATEGORIES
 from .db import get_db, now
@@ -335,11 +335,12 @@ def confirmed_history(
 
     readable(user)
     assignment = get(db, OfficialJudgeAssignment, id)
-    ids = select(Judge.id).where(or_(Judge.id == assignment.judge_id, Judge.merged_into_id == assignment.judge_id))
+    judge = db.get(Judge, assignment.judge_id) if assignment.judge_id else None
+    ids = contact_family(judge.merged_into_id or judge.id) if judge else None
     stmt = select(OfficialJudgeAssignment, PilotCompetition.name).join(PilotCompetition,
         OfficialJudgeAssignment.competition_id == PilotCompetition.id).where(
         OfficialJudgeAssignment.event_year == assignment.event_year,
-        or_(OfficialJudgeAssignment.judge_id.in_(ids) if assignment.judge_id else False, OfficialJudgeAssignment.id == id),
+        or_(OfficialJudgeAssignment.judge_id.in_(ids) if ids is not None else False, OfficialJudgeAssignment.id == id),
     )
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.execute(stmt.order_by(OfficialJudgeAssignment.created_at.desc()).offset((page_no - 1) * 25).limit(25))

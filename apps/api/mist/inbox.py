@@ -1,12 +1,14 @@
 """Shared team inbox. Incoming messages are simulated until a mailbox is connected."""
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, or_, update, union_all, literal
+from sqlalchemy import and_, select, func, or_, update, union_all, literal
+from sqlalchemy.orm import aliased
+from .assignments import contact_family
 from .auth import require, current_user, allowed, fail
 from .db import get_db, now
-from .models import Judge, Recipient, Campaign, InboundMessage, Notification, Ticket, TicketMessage, Committee, ticket_sequence
+from .models import Judge, Recipient, Campaign, InboundMessage, Notification, PilotCompetition, Ticket, TicketMessage, Committee, ticket_sequence
 from .schemas import IncomingEmail, ConversationRead, Page
-from .services import get, serialize, contact_email, clean
+from .services import get, serialize, contact_email, clean, email_address_matches
 
 router = APIRouter(prefix="/api")
 
@@ -89,17 +91,33 @@ def recipient_search(q: str = "", ids: str = "", user=Depends(require("campaigns
 
 
 def unread_judges(db):
-    return dict(db.execute(select(InboundMessage.judge_id, func.count()).where(InboundMessage.judge_id.is_not(None), InboundMessage.read_at.is_(None)).group_by(InboundMessage.judge_id)).all())
+    contact_id = func.coalesce(Judge.merged_into_id, Judge.id)
+    return dict(db.execute(select(contact_id, func.count()).select_from(InboundMessage).join(Judge, Judge.id == InboundMessage.judge_id)
+                           .where(InboundMessage.read_at.is_(None)).group_by(contact_id)).all())
+
+
+def competition_reply_scope(competition_id, event_year):
+    campaign_year = select(Campaign.event_year).join(Recipient, Recipient.campaign_id == Campaign.id).where(
+        Recipient.id == InboundMessage.campaign_recipient_id,
+    ).correlate(InboundMessage).scalar_subquery()
+    return or_(
+        InboundMessage.competition_id == competition_id,
+        and_(InboundMessage.competition_id.is_(None), or_(campaign_year.is_(None), campaign_year == event_year)),
+    )
 
 
 def competition_unread(db, competition_ids):
     # A campaign reply alerts its competition. General replies alert each
     # nomination in the requested competition set.
     from .models import PilotNomination
+    nominee, sender = aliased(Judge), aliased(Judge)
     return dict(db.execute(
         select(PilotNomination.pilot_id, func.count(func.distinct(InboundMessage.id)))
-        .join(InboundMessage, (InboundMessage.judge_id == PilotNomination.judge_id)
-              & or_(InboundMessage.competition_id == PilotNomination.pilot_id, InboundMessage.competition_id.is_(None)))
+        .join(PilotCompetition, PilotCompetition.id == PilotNomination.pilot_id)
+        .join(nominee, nominee.id == PilotNomination.judge_id)
+        .join(InboundMessage, competition_reply_scope(PilotNomination.pilot_id, PilotCompetition.event_year))
+        .join(sender, (sender.id == InboundMessage.judge_id)
+              & (func.coalesce(sender.merged_into_id, sender.id) == func.coalesce(nominee.merged_into_id, nominee.id)))
         .where(InboundMessage.read_at.is_(None), PilotNomination.pilot_id.in_(competition_ids))
         .group_by(PilotNomination.pilot_id)
     ).all())
@@ -107,14 +125,19 @@ def competition_unread(db, competition_ids):
 
 @router.get("/conversations", response_model=Page)
 def conversations(q: str = "", judge_id: UUID | None = None, page_no: int = Query(1, alias="page", ge=1), page_size: int = Query(25, ge=1, le=100), user=Depends(require("campaigns")), db=Depends(get_db)):
-    incoming = select(InboundMessage.judge_id.label("judge_id"), func.max(InboundMessage.created_at).label("latest"), func.count().filter(InboundMessage.read_at.is_(None)).label("unread")).where(InboundMessage.judge_id.is_not(None)).group_by(InboundMessage.judge_id).subquery()
-    outgoing = select(Recipient.judge_id.label("judge_id"), func.max(Recipient.sent_at).label("latest")).where(Recipient.sent_at.is_not(None), Recipient.judge_id.is_not(None)).group_by(Recipient.judge_id).subquery()
+    contact_id = func.coalesce(Judge.merged_into_id, Judge.id)
+    incoming = select(contact_id.label("judge_id"), func.max(InboundMessage.created_at).label("latest"),
+                      func.count().filter(InboundMessage.read_at.is_(None)).label("unread")
+                      ).select_from(InboundMessage).join(Judge, Judge.id == InboundMessage.judge_id).group_by(contact_id).subquery()
+    outgoing = select(contact_id.label("judge_id"), func.max(Recipient.sent_at).label("latest")
+                      ).select_from(Recipient).join(Judge, Judge.id == Recipient.judge_id).where(Recipient.sent_at.is_not(None)).group_by(contact_id).subquery()
     stmt = select(Judge, incoming.c.latest, outgoing.c.latest, func.coalesce(incoming.c.unread, 0)).outerjoin(incoming, incoming.c.judge_id == Judge.id).outerjoin(outgoing, outgoing.c.judge_id == Judge.id).where(Judge.merged_into_id.is_(None), or_(incoming.c.latest.is_not(None), outgoing.c.latest.is_not(None)))
     if q.strip():
         term = f"%{q.strip()}%"
         stmt = stmt.where(or_(Judge.display_name.ilike(term), Judge.primary_email.ilike(term)))
     if judge_id:
-        stmt = stmt.where(Judge.id == judge_id)
+        matched = db.get(Judge, judge_id)
+        stmt = stmt.where(Judge.id == (matched.merged_into_id if matched and matched.merged_into_id else judge_id))
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.execute(stmt.order_by(func.coalesce(incoming.c.unread, 0).desc(), func.greatest(incoming.c.latest, outgoing.c.latest).desc(), Judge.id).offset((page_no - 1) * page_size).limit(page_size)).all()
     return {"items": [{"id": str(j.id), "name": j.display_name, "email": j.primary_email or j.alternate_email, "unread_count": unread, "last_message_at": max([v for v in (received, sent) if v]).isoformat()} for j, received, sent, unread in rows], "total": total, "page": page_no, "page_size": page_size}
@@ -124,23 +147,27 @@ def conversations(q: str = "", judge_id: UUID | None = None, page_no: int = Quer
 def conversation(id: UUID, page_no: int = Query(1, alias="page", ge=1), page_size: int = Query(50, ge=1, le=100), user=Depends(require("campaigns")), db=Depends(get_db)):
     from .models import Outbound
     judge = get(db, Judge, id)
-    incoming = select(InboundMessage.id, InboundMessage.created_at, literal("incoming").label("direction"), InboundMessage.sender_name.label("name"), InboundMessage.sender_email.label("email"), InboundMessage.subject, InboundMessage.body, InboundMessage.read_at, literal("received").label("status"), literal(None).label("campaign_id")).where(InboundMessage.judge_id == id)
-    outgoing = select(Outbound.id, Outbound.created_at, literal("outgoing").label("direction"), Recipient.recipient_name.label("name"), Recipient.recipient_email.label("email"), Outbound.subject, Outbound.body_text.label("body"), literal(None).label("read_at"), Outbound.status, Recipient.campaign_id).join(Recipient, Recipient.id == Outbound.related_campaign_recipient_id).where(Recipient.judge_id == id)
+    if judge.merged_into_id:
+        judge = get(db, Judge, judge.merged_into_id)
+    contacts = contact_family(judge.id)
+    incoming = select(InboundMessage.id, InboundMessage.created_at, literal("incoming").label("direction"), InboundMessage.sender_name.label("name"), InboundMessage.sender_email.label("email"), InboundMessage.subject, InboundMessage.body, InboundMessage.read_at, literal("received").label("status"), literal(None).label("campaign_id")).where(InboundMessage.judge_id.in_(contacts))
+    outgoing = select(Outbound.id, Outbound.created_at, literal("outgoing").label("direction"), Recipient.recipient_name.label("name"), Recipient.recipient_email.label("email"), Outbound.subject, Outbound.body_text.label("body"), literal(None).label("read_at"), Outbound.status, Recipient.campaign_id).join(Recipient, Recipient.id == Outbound.related_campaign_recipient_id).where(Recipient.judge_id.in_(contacts))
     messages = union_all(incoming, outgoing).subquery()
     total = db.scalar(select(func.count()).select_from(messages))
     rows = db.execute(select(messages).order_by(messages.c.created_at.desc(), messages.c.id).offset((page_no - 1) * page_size).limit(page_size)).mappings().all()
-    latest = db.scalar(select(func.max(InboundMessage.created_at)).where(InboundMessage.judge_id == id))
-    return {"judge": {"id": str(judge.id), "name": judge.display_name, "email": judge.primary_email or judge.alternate_email, "phone": judge.phone, "notes": judge.notes}, "messages": [dict(row) for row in reversed(rows)], "total": total, "page": page_no, "page_size": page_size, "unread_count": unread_judges(db).get(id, 0), "read_through": latest}
+    latest = db.scalar(select(func.max(InboundMessage.created_at)).where(InboundMessage.judge_id.in_(contacts)))
+    return {"judge": {"id": str(judge.id), "name": judge.display_name, "email": judge.primary_email or judge.alternate_email, "phone": judge.phone, "notes": judge.notes}, "messages": [dict(row) for row in reversed(rows)], "total": total, "page": page_no, "page_size": page_size, "unread_count": unread_judges(db).get(judge.id, 0), "read_through": latest}
 
 
 @router.post("/conversations/judges/{id}/read")
 def read_conversation(id: UUID, data: ConversationRead, user=Depends(require("campaigns")), db=Depends(get_db)):
-    get(db, Judge, id)
+    judge = get(db, Judge, id)
+    contacts = contact_family(judge.merged_into_id or judge.id)
     if data.read_through.tzinfo is None:
         fail("invalid_read_cursor", "A timezone is required for the read cursor.")
     cursor = min(data.read_through, now())
-    db.execute(update(InboundMessage).where(InboundMessage.judge_id == id, InboundMessage.read_at.is_(None), InboundMessage.created_at <= cursor).values(read_at=now()))
-    db.execute(update(Notification).where(Notification.judge_id == id, Notification.kind == "judge_reply", Notification.created_at <= cursor).values(read_at=now()))
+    db.execute(update(InboundMessage).where(InboundMessage.judge_id.in_(contacts), InboundMessage.read_at.is_(None), InboundMessage.created_at <= cursor).values(read_at=now()))
+    db.execute(update(Notification).where(Notification.judge_id.in_(contacts), Notification.kind == "judge_reply", Notification.created_at <= cursor).values(read_at=now()))
     db.commit()
     return {"ok": True}
 
@@ -151,15 +178,24 @@ def receive(data: IncomingEmail, user=Depends(require("campaigns")), db=Depends(
     if existing:
         return {"id": str(existing.id), "judge_id": str(existing.judge_id) if existing.judge_id else None, "ticket_id": str(existing.ticket_id) if existing.ticket_id else None}
     address = contact_email(data.sender_email)
-    judge = db.scalar(select(Judge).where(Judge.merged_into_id.is_(None), or_(Judge.primary_email == address, Judge.alternate_email == address, Judge.preserved_emails.contains([address]))))
+    matches = list(db.scalars(select(Judge).where(
+        Judge.merged_into_id.is_(None), email_address_matches([address]),
+    ).limit(2)))
+    judge = matches[0] if matches else None
     recipient = None
     if data.campaign_recipient_id:
         recipient = get(db, Recipient, data.campaign_recipient_id)
         if recipient.recipient_email != address or recipient.status != "sent":
             fail("invalid_reply", "Choose a sent email addressed to this sender.")
         judge = db.get(Judge, recipient.judge_id) if recipient.judge_id else judge
+        if judge and judge.merged_into_id:
+            judge = get(db, Judge, judge.merged_into_id)
+        if len(matches) > 1 and not recipient.judge_id:
+            fail("contact_conflict", "Choose a sent message to identify which judge replied.", 409)
+    elif len(matches) > 1:
+        fail("contact_conflict", "Choose a sent message to identify which judge replied.", 409)
     elif judge:
-        recipient = db.scalar(select(Recipient).where(Recipient.judge_id == judge.id, Recipient.recipient_email == address, Recipient.status == "sent").order_by(Recipient.sent_at.desc()).limit(1))
+        recipient = db.scalar(select(Recipient).where(Recipient.judge_id.in_(contact_family(judge.id)), Recipient.recipient_email == address, Recipient.status == "sent").order_by(Recipient.sent_at.desc()).limit(1))
     name = clean(data.sender_name).strip() or (judge.display_name if judge else address)
     message = InboundMessage(judge_id=judge.id if judge else None, campaign_recipient_id=recipient.id if recipient else None, sender_name=name, sender_email=address, subject=clean(data.subject), body=clean(data.body), request_id=data.request_id)
     db.add(message)

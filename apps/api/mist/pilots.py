@@ -10,16 +10,19 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from sqlalchemy import func, or_, select
 from .auth import current_user, require, allowed, fail
-from .assignments import REQUIRED_JUDGES, live_assignments, lock_assignments, place_assignment, release_assignment
+from .assignments import (
+    REQUIRED_JUDGES, contact_family, live_assignments, lock_assignments,
+    place_assignment, release_assignment, tournament_archive,
+)
 from .competition_catalog import CATEGORIES
 from .db import get_db, now
-from .inbox import competition_unread
+from .inbox import competition_reply_scope, competition_unread
 from .models import (InboundMessage, Judge, JudgeQualification, OfficialJudgeAssignment,
                      PilotCompetition, PilotDocument, PilotNomination, Qualification, User)
 from .schemas import ObjectView, OfficialAssignmentIn, Page, PilotJudgeIn, PilotStatusIn, PilotDeleteIn
 from .services import (
     add_relations, audit, clean, contact_email, get, page, serialize, split_values,
-    write_judge,
+    lock_contact_writes, write_judge,
 )
 
 router = APIRouter(prefix="/api/competitions")
@@ -255,6 +258,7 @@ async def create_pilot(
         fail("invalid_judges", "Select at most 100 judges when creating a pilot.")
     if ids:
         lock_assignments(db)
+        lock_contact_writes(db)
     judges = db.scalars(
         select(Judge).where(Judge.id.in_(ids), Judge.merged_into_id.is_(None))
     ).all()
@@ -427,7 +431,8 @@ def pilot_judges(
             PilotNomination.status == "awaiting_response",
             PilotNomination.last_contacted_at <= now() - timedelta(days=overdue_days),
         )
-    unread = select(func.count()).select_from(InboundMessage).where(InboundMessage.judge_id == PilotNomination.judge_id, InboundMessage.read_at.is_(None), or_(InboundMessage.competition_id == id, InboundMessage.competition_id.is_(None))).correlate(PilotNomination).scalar_subquery()
+    reply_scope = competition_reply_scope(id, competition.event_year)
+    unread = select(func.count()).select_from(InboundMessage).where(InboundMessage.judge_id == PilotNomination.judge_id, InboundMessage.read_at.is_(None), reply_scope).correlate(PilotNomination).scalar_subquery()
     stmt = stmt.order_by(unread.desc(), PilotNomination.created_at.desc())
 
     official = {
@@ -443,18 +448,21 @@ def pilot_judges(
     }
 
     def view(nomination):
-        judge = get(db, Judge, nomination.judge_id)
+        original = get(db, Judge, nomination.judge_id)
+        judge = get(db, Judge, original.merged_into_id) if original.merged_into_id else original
+        assignment = official.get(judge.id)
         return {
             **serialize(nomination),
-            "official_assignment": official.get(nomination.judge_id),
-            "unread_count": db.scalar(select(func.count()).select_from(InboundMessage).where(InboundMessage.judge_id == nomination.judge_id, InboundMessage.read_at.is_(None), or_(InboundMessage.competition_id == id, InboundMessage.competition_id.is_(None)))),
+            "official_assignment": assignment,
+            "archive_status": db.scalar(select(tournament_archive(judge.id, competition.event_year))),
+            "unread_count": db.scalar(select(func.count()).select_from(InboundMessage).where(InboundMessage.judge_id.in_(contact_family(judge.id)), InboundMessage.read_at.is_(None), reply_scope)),
             "judge": {
                 "id": str(judge.id),
                 "display_name": judge.display_name,
                 "primary_email": judge.primary_email,
                 "phone": judge.phone,
                 "do_not_contact": judge.do_not_contact,
-                "is_active_contact": judge.merged_into_id is None,
+                "is_active_contact": original.merged_into_id is None,
                 "qualification_text": nomination.qualification_text,
                 "qualifications": [
                     name for (name,) in db.execute(
@@ -479,6 +487,7 @@ def add_pilot_judge(
     from .recruitment import email_contacts, queue_nomination
 
     lock_assignments(db)
+    lock_contact_writes(db)
     pilot = active_competition(db, id)
     if pilot.activation_status != "active":
         fail("competition_inactive", "Choose an active competition.", 409)
@@ -492,7 +501,6 @@ def add_pilot_judge(
         phone = clean(data.phone).strip()
         if not name or not (address or phone):
             fail("contact_required", "Enter a name and at least an email or phone.")
-        db.execute(select(func.pg_advisory_xact_lock(410261)))
         matches = list(db.scalars(email_contacts(address).limit(2))) if address else []
         if len(matches) > 1:
             fail("contact_conflict", "Resolve the duplicate contacts before submitting.", 409)
@@ -519,8 +527,8 @@ def add_pilot_judge(
             )
     if db.scalar(
         select(PilotNomination).where(
-            PilotNomination.pilot_id == id, PilotNomination.judge_id == judge.id
-        )
+            PilotNomination.pilot_id == id, PilotNomination.judge_id.in_(contact_family(judge.id)),
+        ).limit(1)
     ):
         fail("already_added", "This judge is already in the pilot.", 409)
     nomination = queue_nomination(db, pilot, judge, user, clean(data.qualifications).strip())

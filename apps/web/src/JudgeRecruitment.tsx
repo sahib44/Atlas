@@ -165,12 +165,13 @@ function CandidatePanel({ row, close, edit, onApprove, onArchive, onReopen }: {
   const [declineDraft, setDeclineDraft] = useState(false);
   const [editingDetails, setEditingDetails] = useState(false);
   const action = useAction();
-  const review = can(user, "recruitment_review") && row.review_status === "pending";
+  const review = can(user, "recruitment_review") && row.review_status === "pending" && !row.archive_status;
   const active = !row.archive_status && row.stage !== "confirmed";
   const approved = row.review_status === "approved";
   const archived = ["declined", "rejected", "withdrawn"].includes(row.archive_status);
-  const canReopen = (archived && row.stage !== "confirmed") || (approved && active && can(user, "recruitment_review"));
-  const canFollowUp = approved && !row.do_not_contact && (active || row.archive_status === "declined");
+  const canReopen = (archived && row.can_reopen_archive && row.stage !== "confirmed") || (approved && active && can(user, "recruitment_review"));
+  const reopenLabel = !archived ? "Return to Prospect" : row.reopen_returns_to_prospect ? "Move back to Recruitment" : "Lift tournament archive";
+  const canFollowUp = approved && !row.do_not_contact && (active || (row.archive_status === "declined" && row.status === "declined"));
   const outreachPath = `/campaigns/new?competition_id=${row.pilot_id}&event_year=${row.event_year}${row.archive_status === "declined" ? "&allow_declined=1" : ""}`;
   const steps = [true, approved, row.stage === "contacted" || (row.stage === "confirmed" && !!row.last_contacted_at), row.stage === "confirmed"];
   const reviewDecision = async (decision: "approved" | "rejected") => {
@@ -236,7 +237,7 @@ function CandidatePanel({ row, close, edit, onApprove, onArchive, onReopen }: {
           {row.stage === "confirmed" && <Link className="button" to={`/judges?event_year=${row.event_year}&q=${encodeURIComponent(row.name)}`}>View in Directory</Link>}
           {!active && row.archive_status && <p>{label(row.archive_status)}</p>}
           {canReopen && <button type="button" onClick={() => { action.reset(); setReopen(true); }}>
-            {archived ? "Move back to Recruitment" : "Return to Prospect"}
+            {reopenLabel}
           </button>}
           {row.do_not_contact && <p>Do not contact</p>}
           <ErrorBox error={action.error} />
@@ -256,8 +257,10 @@ function CandidatePanel({ row, close, edit, onApprove, onArchive, onReopen }: {
       <div className="form-footer"><button onClick={() => setReject(false)}>Cancel</button>
         <button className="pilot-delete" disabled={action.isPending} onClick={() => reviewDecision("rejected")}>Confirm rejection</button></div>
     </Modal>}
-    {reopen && <Modal title={archived ? "Move back to Recruitment" : "Return to Prospect"} onClose={() => setReopen(false)}>
-      <p>{row.name} will return to Prospect and need chair approval before outreach. Their history will be preserved.</p>
+    {reopen && <Modal title={reopenLabel} onClose={() => setReopen(false)}>
+      <p>{row.reopen_returns_to_prospect
+        ? `${row.name} will return to Prospect and need chair approval before outreach. Their history will be preserved.`
+        : `Lift the tournament archive for ${row.name}. This request stays in their history.`}</p>
       <ErrorBox error={action.error} />
       <div className="form-footer"><button type="button" onClick={() => setReopen(false)}>Cancel</button>
         <button type="button" className="primary" disabled={action.isPending} onClick={async () => {
@@ -265,7 +268,7 @@ function CandidatePanel({ row, close, edit, onApprove, onArchive, onReopen }: {
             await action.mutateAsync({ path: `/recruitment/${row.id}/reopen` });
             setReopen(false);
             setDeclineDraft(false);
-            onReopen();
+            if (row.reopen_returns_to_prospect) onReopen(); else close();
           } catch {}
         }}>Reopen request</button></div>
     </Modal>}

@@ -114,7 +114,8 @@ def deliver(db, id, worker_id):
         suppressed = campaign_email and contact_suppressed(db, msg.recipient_email, suppression_judge_id)
         if not suppressed:
             blocked = outreach_block(db, competition, msg.recipient_email, judge_id,
-                                     campaign.allow_declined_outreach if campaign else False, campaign.event_year if campaign else None)
+                                     campaign.allow_declined_outreach if campaign else False, campaign.event_year if campaign else None,
+                                     check_identity=campaign_email)
     if suppressed or blocked or (campaign and campaign.status == "cancelled") or merged_contact:
         msg.status = "cancelled"
         if suppressed:
@@ -153,16 +154,14 @@ def deliver(db, id, worker_id):
                     judge.last_contacted_at = now()
                     if judge.status in {"prospective", "to_contact", "contacted", "awaiting_response"}:
                         judge.status = "awaiting_response"
-                    if not campaign.pilot_competition_id:
-                        for nomination in db.scalars(select(PilotNomination).where(PilotNomination.judge_id == judge.id, PilotNomination.status.in_(["to_contact", "awaiting_response"]),
-                            PilotNomination.review_status.is_(None))):
+                    if not campaign.pilot_competition_id and campaign.event_year:
+                        for nomination in db.scalars(select(PilotNomination).join(PilotCompetition).where(
+                            PilotNomination.judge_id == judge.id, PilotCompetition.event_year == campaign.event_year,
+                            PilotCompetition.deleted_at.is_(None), PilotCompetition.activation_status == "active",
+                            or_(PilotNomination.review_status.is_(None), PilotNomination.review_status == "approved"),
+                            PilotNomination.status.in_(["to_contact", "awaiting_response"]),
+                        )):
                             nomination.status, nomination.last_contacted_at = "awaiting_response", now()
-                        if campaign.event_year:
-                            for nomination in db.scalars(select(PilotNomination).join(PilotCompetition).where(
-                                PilotNomination.judge_id == judge.id, PilotCompetition.event_year == campaign.event_year,
-                                PilotNomination.review_status == "approved", PilotNomination.status.in_(["to_contact", "awaiting_response"]),
-                            )):
-                                nomination.status, nomination.last_contacted_at = "awaiting_response", now()
         except Exception as exc:
             msg.last_error = (
                 "Simulated sandbox delivery failure"

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { FileText, Mail, Plus, Trash2, Upload, Users } from "lucide-react";
-import { useAction, useData, Page, Row, can, date } from "./api";
+import { useAction, useData, Page, Row, can, date, label } from "./api";
 import { useUser } from "./App";
 import { UnreadMarker } from "./Inbox";
 import { Back, Empty, ErrorBox, Field, Heading, Loading, Modal, Pagination, Panel } from "./ui";
@@ -167,7 +167,7 @@ function PilotWorkspace({ id }: { id: string }) {
   const documents = Object.fromEntries((details.documents || []).map((doc: Row) => [doc.kind, doc]));
   const visible = nominations.data?.items || [];
   const selectedJudges = visible.filter((nomination) => selected.includes(nomination.id));
-  const mailReady = selectedJudges.filter((nomination) => nomination.judge.primary_email && !nomination.judge.do_not_contact && nomination.status !== "declined" && (!nomination.review_status || nomination.review_status === "approved"));
+  const mailReady = selectedJudges.filter((nomination) => active && nomination.judge.is_active_contact && nomination.judge.primary_email && !nomination.judge.do_not_contact && !nomination.archive_status && (!nomination.review_status || nomination.review_status === "approved"));
   function changeFilter(nextStatus: string, nextOverdue: boolean) {
     setStatus(nextStatus); setOverdue(nextOverdue); setPage(1); setSelected([]); setDeclineDraft(null);
   }
@@ -229,7 +229,8 @@ function PilotWorkspace({ id }: { id: string }) {
                   <Link to={`/campaigns/conversations/judges/${nomination.judge.id}`}><strong>{nomination.judge.display_name}</strong></Link> <UnreadMarker count={nomination.unread_count} />
                   <small>{nomination.judge.primary_email || "No email"}{nomination.judge.phone ? ` · ${nomination.judge.phone}` : ""}</small>
                   {(nomination.qualification_text || !!nomination.judge.qualifications?.length) && <p className="caption">{nomination.qualification_text || nomination.judge.qualifications.join("; ")}</p>}
-                  {nomination.status === "awaiting_response" && nomination.last_contacted_at && <small>Awaiting since {date(nomination.last_contacted_at)}</small>}
+                  {nomination.archive_status && <small>{label(nomination.archive_status)}</small>}
+                  {!nomination.archive_status && nomination.status === "awaiting_response" && nomination.last_contacted_at && <small>Awaiting since {date(nomination.last_contacted_at)}</small>}
                   {nomination.official_assignment && <small className="official-assignment-summary">
                     {nomination.official_assignment.competition_id === id
                       ? `Official slot ${nomination.official_assignment.slot_number}`
@@ -240,7 +241,7 @@ function PilotWorkspace({ id }: { id: string }) {
                   <Field label="Response">
                     <select
                       value={declineDraft === nomination.id ? "declined" : nomination.status}
-                      disabled={action.isPending || ["pending", "rejected"].includes(nomination.review_status) || (nomination.status === "declined" && !!nomination.review_status)}
+                      disabled={action.isPending || !active || !nomination.judge.is_active_contact || !!nomination.archive_status || nomination.official_assignment?.competition_id === id || ["pending", "rejected"].includes(nomination.review_status)}
                       onChange={(e) => {
                         const nextStatus = e.target.value;
                         setDeclineDraft(nextStatus === "declined" ? nomination.id : null);
@@ -255,7 +256,7 @@ function PilotWorkspace({ id }: { id: string }) {
                     <button type="button" disabled={action.isPending} onClick={() => saveResponse(nomination.id, "declined")}>Save decline</button>
                   </div>}
                   {nomination.review_status && <Link to={`/recruitment?event_year=${details.event_year}&candidate=${nomination.id}`}>View recruitment request</Link>}
-                  {declineDraft !== nomination.id && canManage && active && details.confirmed_count < details.required_count && nomination.status === "accepted" && nomination.judge.is_active_contact && (!nomination.review_status || nomination.review_status === "approved") && (
+                  {declineDraft !== nomination.id && canManage && active && !nomination.archive_status && details.confirmed_count < details.required_count && nomination.status === "accepted" && nomination.judge.is_active_contact && (!nomination.review_status || nomination.review_status === "approved") && (
                     <button type="button" onClick={() => setCandidate({ nominationId: nomination.id, judgeName: nomination.judge.display_name, current: nomination.official_assignment })}>
                       {nomination.official_assignment ? "Reassign judge" : "Confirm assignment"}
                     </button>

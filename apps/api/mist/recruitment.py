@@ -6,30 +6,22 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import String, and_, case, cast, func, or_, select, update
 from sqlalchemy.orm import aliased
 
-from .assignments import REQUIRED_JUDGES, live_assignments, lock_assignments, outstanding_withdrawals, place_assignment, release_assignment
+from .assignments import (
+    REQUIRED_JUDGES, contact_family, contact_has_email_conflict, ensure_contact_unambiguous, live_assignments,
+    lock_assignments, outstanding_withdrawals, place_assignment, release_assignment, tournament_archive,
+)
 from .auth import allowed, fail, require
 from .competition_catalog import CATEGORIES
 from .db import get_db, now
 from .inbox import notify
 from .models import Audit, Engagement, Judge, Notification, OfficialJudgeAssignment, PilotCompetition, PilotNomination, RetainedSuppression, User
 from .schemas import JudgeDetailsIn, OfficialAssignmentIn, Page, PilotStatusIn, RecruitmentIn, RecruitmentReview
-from .services import audit, clean, contact_email, email, get, serialize, write_judge
+from .services import audit, clean, contact_email, email, email_address_matches, get, lock_contact_writes, serialize, write_judge
 
 router = APIRouter(prefix="/api/recruitment")
 
-# Match Python's strip() when comparing previously stored addresses in PostgreSQL.
-EMAIL_WHITESPACE = (
-    " \t\n\r\v\f\x1c\x1d\x1e\x1f\x85\xa0\u1680"
-    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
-    "\u2028\u2029\u202f\u205f\u3000"
-)
-
-
 def email_contacts(address):
-    return select(Judge).where(Judge.merged_into_id.is_(None), or_(
-        Judge.primary_email == address, Judge.alternate_email == address,
-        Judge.preserved_emails.contains([address]),
-    ))
+    return select(Judge).where(Judge.merged_into_id.is_(None), email_address_matches([email(address)]))
 
 
 def contact_suppressed(db, address, judge_id=None):
@@ -38,18 +30,8 @@ def contact_suppressed(db, address, judge_id=None):
     if address and db.get(RetainedSuppression, address):
         return True
 
-    def matches(column):
-        # Contact writes normalize addresses. Handle case and whitespace in older values.
-        return func.lower(func.btrim(column, EMAIL_WHITESPACE)) == address
-
-    aliases = func.jsonb_array_elements_text(Judge.preserved_emails).table_valued("address").render_derived()
-    preserved_match = select(aliases.c.address).where(matches(aliases.c.address)).correlate(Judge).exists()
-    active_match = and_(
-        Judge.merged_into_id.is_(None),
-        or_(matches(Judge.primary_email), matches(Judge.alternate_email), preserved_match),
-    )
     # A merge marks the former contact suppressed and preserves its emails on the survivor.
-    destination_match = active_match if address else False
+    destination_match = and_(Judge.merged_into_id.is_(None), email_address_matches([address])) if address else False
     return db.scalar(select(Judge.id).where(
         Judge.do_not_contact,
         or_(Judge.id == judge_id, destination_match),
@@ -73,7 +55,7 @@ def write_request(db, data, user, nomination=None):
     name, qualification = clean(data.name).strip(), clean(data.qualifications).strip()
     if not name or not qualification:
         fail("request_fields", "Enter a name and qualifications.")
-    db.execute(select(func.pg_advisory_xact_lock(410261)))
+    lock_contact_writes(db)
     matches = list(db.scalars(email_contacts(address).limit(2)))
     selected_id = nomination.judge_id if nomination else data.existing_judge_id
     if len(matches) > 1 or (matches and selected_id and matches[0].id != selected_id):
@@ -85,9 +67,12 @@ def write_request(db, data, user, nomination=None):
                                     (selected_id and not matches and (judge.primary_email or judge.alternate_email))):
         fail("contact_conflict", "Use the existing contact's name and email when submitting this request.", 409)
     if judge:
+        ensure_contact_unambiguous(db, judge)
+        if db.scalar(select(tournament_archive(judge.id, competition.event_year))):
+            fail("candidate_archived", "Reopen the archived request before recruiting this judge for this tournament.", 409)
         duplicate = db.scalar(select(PilotNomination).where(
-            PilotNomination.pilot_id == competition.id, PilotNomination.judge_id == judge.id,
-        ))
+            PilotNomination.pilot_id == competition.id, PilotNomination.judge_id.in_(contact_family(judge.id)),
+        ).order_by((PilotNomination.judge_id == judge.id).desc(), PilotNomination.id).limit(1))
         if duplicate and (not nomination or duplicate.id != nomination.id) and duplicate.review_status is not None:
             fail("already_requested", "This judge already has a request for this competition.", 409)
         if duplicate and nomination and duplicate.id != nomination.id:
@@ -114,6 +99,7 @@ def write_request(db, data, user, nomination=None):
     record = nomination or duplicate or PilotNomination(pilot_id=competition.id, judge_id=judge.id)
     before = serialize(record) if record.id else None
     record.pilot_id = competition.id
+    record.judge_id = judge.id
     record.qualification_text = qualification
     record.request_notes = clean(data.notes)
     record.prior_involvement = clean(data.prior_involvement)
@@ -137,6 +123,9 @@ def notify_request(db, record, competition, judge, user):
 
 def queue_nomination(db, competition, judge, user, qualification=""):
     """Submit a request from the existing competition contact entry points."""
+    ensure_contact_unambiguous(db, judge)
+    if db.scalar(select(tournament_archive(judge.id, competition.event_year))):
+        fail("candidate_archived", "Reopen the archived request before recruiting this judge for this tournament.", 409)
     record = PilotNomination(pilot_id=competition.id, judge_id=judge.id,
                              qualification_text=qualification, requested_by=user.id, review_status="pending")
     db.add(record)
@@ -162,6 +151,10 @@ def edit_request(id: UUID, data: RecruitmentIn, user=Depends(require("recruitmen
         fail("review_closed", "Only a pending request can be edited during review.", 409)
     if get(db, PilotCompetition, record.pilot_id).event_year != target_competition(db, data.competition_id).event_year:
         fail("wrong_tournament", "Review edits must stay within the request's tournament.", 409)
+    if record.pilot_id != data.competition_id and (
+        record.status != "to_contact" or record.responded_at or record.last_contacted_at or record.reopened_at
+    ):
+        fail("request_has_history", "Create a separate request for the new competition to preserve the original response.", 409)
     record, competition, _ = write_request(db, data, user, record)
     db.execute(update(Notification).where(Notification.kind == "judge_request",
                Notification.href.endswith(f"&candidate={record.id}")).values(href=recruitment_href(competition, record)))
@@ -182,6 +175,8 @@ def review_request(id: UUID, data: RecruitmentReview, user=Depends(require("recr
         if judge.merged_into_id or not record.qualification_text.strip():
             fail("request_incomplete", "An active contact and qualifications are required before approval.", 409)
         contact_email(judge.primary_email or judge.alternate_email)
+        if db.scalar(select(tournament_archive(judge.id, competition.event_year))):
+            fail("candidate_archived", "Reopen the archived request before approving this judge for this tournament.", 409)
     before = serialize(record)
     record.review_status, record.reviewed_at, record.reviewed_by = data.decision, now(), user.id
     audit(db, user, f"recruitment.{data.decision}", record, f"Judge request {data.decision}", before, serialize(record))
@@ -195,19 +190,23 @@ def review_request(id: UUID, data: RecruitmentReview, user=Depends(require("recr
 
 
 def update_response(db, record, status, user):
+    competition = target_competition(db, record.pilot_id)
+    judge = get(db, Judge, record.judge_id)
+    if judge.merged_into_id:
+        fail("invalid_judge", "Use a request for the surviving contact before changing this response.", 409)
     if record.review_status not in {None, "approved"}:
         fail("approval_required", "The chair must approve this request before recording an outreach response.", 409)
-    if record.review_status is not None and record.status == "declined":
-        fail("candidate_archived", "This declined request is archived.", 409)
-    if db.scalar(outstanding_withdrawals(record.judge_id).where(
-        OfficialJudgeAssignment.competition_id == record.pilot_id,
-    ).limit(1)):
-        fail("candidate_archived", "Reopen this withdrawn request before updating the response.", 409)
-    if status == "declined" and db.scalar(live_assignments().where(
+    assignment_scope = (
+        OfficialJudgeAssignment.event_year == competition.event_year
+        if status == "declined" else OfficialJudgeAssignment.competition_id == competition.id
+    )
+    if status != "accepted" and db.scalar(live_assignments().where(
         OfficialJudgeAssignment.judge_id == record.judge_id,
-        OfficialJudgeAssignment.event_year == get(db, PilotCompetition, record.pilot_id).event_year,
+        assignment_scope,
     ).limit(1)):
         fail("judge_assigned", "Use Unconfirm to record a confirmed judge's withdrawal.", 409)
+    if db.scalar(select(tournament_archive(judge.id, competition.event_year))):
+        fail("candidate_archived", "Reopen the archived request before updating a response for this tournament.", 409)
     before = serialize(record)
     record.responded_at = now() if status in {"accepted", "declined"} else None
     if status == "awaiting_response" and record.status != status:
@@ -264,14 +263,20 @@ def withdraw(id: UUID, user=Depends(require("judges")), db=Depends(get_db)):
 def reopen_request(id: UUID, user=Depends(require("judges")), db=Depends(get_db)):
     lock_assignments(db)
     record = get(db, PilotNomination, id, True)
-    competition = target_competition(db, record.pilot_id)
+    competition = get(db, PilotCompetition, record.pilot_id)
     judge = get(db, Judge, record.judge_id)
     if judge.merged_into_id:
         judge = get(db, Judge, judge.merged_into_id)
     withdrawn = db.scalar(outstanding_withdrawals(judge.id).where(
         OfficialJudgeAssignment.competition_id == competition.id,
     ).limit(1))
-    archived = withdrawn or record.status == "declined" or record.review_status == "rejected"
+    original_disposition = withdrawn or record.status == "declined"
+    active_competition = competition.deleted_at is None and competition.activation_status == "active"
+    if not active_competition and not original_disposition:
+        fail("competition_inactive", "Choose an active competition.", 409)
+    archived = original_disposition or record.review_status == "rejected"
+    if not original_disposition and db.scalar(select(tournament_archive(judge.id, competition.event_year))):
+        fail("candidate_archived", "Reopen the original withdrawal or decline before returning this request to Prospect.", 409)
     if not archived and record.review_status != "approved":
         fail("request_not_reopenable", "This request is already in the Prospect stage.", 409)
     if not archived and not allowed(user, "recruitment_review"):
@@ -288,14 +293,20 @@ def reopen_request(id: UUID, user=Depends(require("judges")), db=Depends(get_db)
     record.responded_at = record.last_contacted_at = None
     record.reopened_at = now()
     record.requested_by = record.requested_by or user.id
+    existing_request = False
     if record.judge_id != judge.id:
-        if db.scalar(select(PilotNomination.id).where(
+        existing_request = db.scalar(select(PilotNomination.id).where(
             PilotNomination.pilot_id == competition.id, PilotNomination.judge_id == judge.id,
-        )):
+        )) is not None
+        if existing_request and not original_disposition:
             fail("request_merge_conflict", "The surviving contact already has a request for this competition.", 409)
-        record.judge_id = judge.id
-    audit(db, user, "recruitment.reopened", record, "Moved judge request back to Prospect", before, serialize(record))
-    notify_request(db, record, competition, judge, user)
+        if not existing_request:
+            record.judge_id = judge.id
+    resumes_request = active_competition and not existing_request
+    summary = "Moved judge request back to Prospect" if resumes_request else "Lifted tournament archive on a historical request"
+    audit(db, user, "recruitment.reopened", record, summary, before, serialize(record))
+    if resumes_request:
+        notify_request(db, record, competition, judge, user)
     db.commit()
     return serialize(record)
 
@@ -324,20 +335,17 @@ def edit_candidate_details(id: UUID, data: JudgeDetailsIn, user=Depends(require(
 
 def recruitment_rows(event_year):
     assigned = select(OfficialJudgeAssignment.id).where(
-        OfficialJudgeAssignment.event_year == PilotCompetition.event_year,
+        OfficialJudgeAssignment.competition_id == PilotCompetition.id,
         OfficialJudgeAssignment.judge_id == Judge.id, OfficialJudgeAssignment.released_at.is_(None),
     ).correlate(PilotCompetition, Judge).exists()
-    withdrawn = outstanding_withdrawals(Judge.id).where(
-        OfficialJudgeAssignment.competition_id == PilotCompetition.id,
-    ).correlate(PilotCompetition, Judge).exists()
-    # An official slot in this tournament takes precedence over candidate stages.
+    disposition = tournament_archive(Judge.id, PilotCompetition.event_year)
     approved = PilotNomination.review_status == "approved"
     stage = case((assigned, "confirmed"), (and_(approved, PilotNomination.last_contacted_at.is_not(None)), "contacted"),
                  (approved, "approved"), else_="prospect")
-    archive = case((withdrawn, "withdrawn"), (PilotNomination.status == "declined", "declined"),
-                   (PilotNomination.review_status == "rejected", "rejected"),
+    archive = case((assigned, ""), (disposition != "", disposition),
                    (PilotCompetition.deleted_at.is_not(None), "inactive"),
-                   (PilotCompetition.activation_status != "active", "inactive"), else_="")
+                   (PilotCompetition.activation_status != "active", "inactive"),
+                   (PilotNomination.review_status == "rejected", "rejected"), else_="")
     submitter = aliased(User)
     original_contact = aliased(Judge)
     canonical_request = aliased(PilotNomination)
@@ -346,14 +354,16 @@ def recruitment_rows(event_year):
     ).correlate(Judge, PilotNomination).exists()
     returning = select(Engagement.id).where(Engagement.judge_id == Judge.id,
         Engagement.event_year < event_year).correlate(Judge).exists()
-    previously_assigned = select(OfficialJudgeAssignment.id).where(OfficialJudgeAssignment.judge_id == Judge.id,
+    previously_assigned = select(OfficialJudgeAssignment.id).where(OfficialJudgeAssignment.judge_id.in_(contact_family(Judge.id)),
         OfficialJudgeAssignment.event_year < event_year).correlate(Judge).exists()
     statement = select(PilotNomination, PilotCompetition, Judge, submitter.full_name, stage, archive,
                        returning | previously_assigned).select_from(PilotNomination).join(PilotCompetition, PilotNomination.pilot_id == PilotCompetition.id
         ).join(original_contact, PilotNomination.judge_id == original_contact.id
         ).join(Judge, Judge.id == func.coalesce(original_contact.merged_into_id, original_contact.id)
         ).outerjoin(submitter, PilotNomination.requested_by == submitter.id
-        ).where(PilotCompetition.event_year == event_year, or_(original_contact.merged_into_id.is_(None), ~has_canonical_request))
+        ).where(PilotCompetition.event_year == event_year, or_(
+            original_contact.merged_into_id.is_(None), ~has_canonical_request, PilotNomination.status == "declined",
+        ))
     return statement, stage, archive, submitter
 
 
@@ -426,14 +436,27 @@ def candidate(id: UUID, user=Depends(require("judges")), db=Depends(get_db)):
         fail("not_found", "This contact was merged. Open the surviving contact.", 404)
     judge = row[2]
     assignment_ids = select(cast(OfficialJudgeAssignment.id, String)).where(
-        OfficialJudgeAssignment.competition_id == record.pilot_id, OfficialJudgeAssignment.judge_id == judge.id)
+        OfficialJudgeAssignment.competition_id == record.pilot_id,
+        OfficialJudgeAssignment.judge_id.in_(contact_family(judge.id)),
+    )
+    archive_status = row[5]
+    can_reopen_archive = record.status == "declined" or (
+        archive_status == "withdrawn" and db.scalar(outstanding_withdrawals(judge.id).where(
+            OfficialJudgeAssignment.competition_id == record.pilot_id,
+        ).limit(1)) is not None
+    ) or archive_status == "rejected"
     history = db.execute(select(Audit, User.full_name).outerjoin(User, Audit.actor_user_id == User.id)
         .where(or_(
             and_(Audit.entity_type == "pilot_nominations", Audit.entity_id == str(id)),
             and_(Audit.entity_type == "official_judge_assignments", Audit.entity_id.in_(assignment_ids)),
         ))
         .order_by(Audit.created_at.desc()).limit(50))
-    return {**candidate_view(row), "history": [
+    competition = row[1]
+    duplicate_request = record.judge_id != judge.id and db.scalar(select(PilotNomination.id).where(
+        PilotNomination.pilot_id == competition.id, PilotNomination.judge_id == judge.id,
+    )) is not None
+    reopen_returns_to_prospect = competition.deleted_at is None and competition.activation_status == "active" and not duplicate_request
+    return {**candidate_view(row), "can_reopen_archive": can_reopen_archive, "reopen_returns_to_prospect": reopen_returns_to_prospect, "history": [
         {"id": str(entry.id), "summary": entry.summary, "created_at": entry.created_at, "actor": actor}
         for entry, actor in history
     ]}
@@ -456,7 +479,7 @@ def merge_recruitment_contacts(db, survivor, other, actor):
         audit(db, actor, "recruitment.contact_merged", row, "Linked the request to the surviving contact", before, serialize(row))
 
 
-def outreach_block(db, competition, address, judge_id=None, allow_declined=False, event_year=None):
+def outreach_block(db, competition, address, judge_id=None, allow_declined=False, event_year=None, *, check_identity=True):
     """Validate managed requests even when a recipient was entered as a raw email."""
     if competition and (competition.deleted_at or competition.activation_status != "active"):
         return "Competition is inactive"
@@ -466,6 +489,10 @@ def outreach_block(db, competition, address, judge_id=None, allow_declined=False
         ids.add(judge_id)
     if not ids:
         return ""
+    if check_identity and any(contact_has_email_conflict(db, judge, destination=address) for judge in db.scalars(
+        select(Judge).where(Judge.id.in_(ids), Judge.merged_into_id.is_(None)),
+    )):
+        return "Resolve contacts that share an email address before continuing"
     stmt = select(PilotNomination, PilotCompetition).join(PilotCompetition).where(
         PilotNomination.judge_id.in_(ids), PilotCompetition.deleted_at.is_(None))
     if competition:
@@ -489,9 +516,9 @@ def outreach_block(db, competition, address, judge_id=None, allow_declined=False
             withdrawals = withdrawals.where(OfficialJudgeAssignment.event_year == year)
         if db.scalar(withdrawals.limit(1)):
             return "Judge withdrew from this tournament"
+    family_ids = select(Judge.id).where(or_(Judge.id.in_(ids), Judge.merged_into_id.in_(ids)))
     declines = select(PilotNomination.id).join(PilotCompetition).where(
-        PilotNomination.judge_id.in_(ids), PilotNomination.review_status == "approved",
-        PilotNomination.status == "declined")
+        PilotNomination.judge_id.in_(family_ids), PilotNomination.status == "declined")
     if year:
         declines = declines.where(PilotCompetition.event_year == year)
     is_manual_decline = allow_declined and competition and any(
