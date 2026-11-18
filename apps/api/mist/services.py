@@ -2,10 +2,12 @@ import csv
 import io
 import re
 import unicodedata
+from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
 from uuid import UUID
 import bleach
+from fastapi import HTTPException
 from sqlalchemy import String, cast, select, func, or_, delete
 from .models import *
 from .auth import allowed, fail
@@ -41,13 +43,22 @@ def clean(value):
     return bleach.clean(str(value or ""), tags=[], attributes={}, strip=True)
 
 
+def contact_name(value):
+    return " ".join(clean(value).split())
+
+
 def email(value):
     return str(value or "").strip().lower()
 
 
 def judge_email_addresses(judge):
-    addresses = (judge.primary_email, judge.alternate_email, *judge.preserved_emails)
+    addresses = (judge.primary_email, judge.alternate_email, *(judge.preserved_emails or []))
     return {normalized for address in addresses if (normalized := email(address))}
+
+
+def contact_addresses(data):
+    addresses = (data.get("primary_email"), data.get("alternate_email"), *data.get("preserved_emails", []))
+    return {address for value in addresses if (address := email(value))}
 
 
 # Compare older database addresses with the same trimming as contact input.
@@ -67,6 +78,16 @@ def email_address_matches(addresses):
             func.lower(func.btrim(aliases.c.address, EMAIL_WHITESPACE)).in_(addresses),
         ).correlate(Judge).exists(),
     )
+
+
+def ensure_email_ownership(db, addresses, owner_id=None):
+    if not addresses:
+        return
+    conflicts = select(Judge.id).where(Judge.merged_into_id.is_(None), email_address_matches(addresses))
+    if owner_id is not None:
+        conflicts = conflicts.where(Judge.id != owner_id)
+    if db.scalar(conflicts.limit(1)):
+        fail("contact_conflict", "An email address already belongs to another active contact. Resolve the matching contact before saving.", 409)
 
 
 def safe_email(value, optional=False):
@@ -260,6 +281,7 @@ def write_judge(db, data, actor, existing=None, source="manual"):
     lock_contact_writes(db)
     judge = existing or Judge(created_by=actor.id, source=source)
     before = serialize(judge) if existing else None
+    previous_addresses = judge_email_addresses(judge)
     for key in FIELDS:
         if key in {"qualifications", "categories", "years"} or key not in data:
             continue
@@ -269,6 +291,8 @@ def write_judge(db, data, actor, existing=None, source="manual"):
         elif isinstance(value, str):
             value = clean(value)
         setattr(judge, key, value)
+    # Permit unrelated edits to legacy contacts, while blocking newly claimed addresses.
+    ensure_email_ownership(db, judge_email_addresses(judge) - previous_addresses, judge.id)
     if before and judge.do_not_contact:
         previous_addresses = {before["primary_email"], before["alternate_email"]}
         removed_addresses = previous_addresses - {"", judge.primary_email, judge.alternate_email}
@@ -383,29 +407,51 @@ def judge_query(filters):
     return stmt.order_by(Judge.id)
 
 
-def duplicate_match(incoming, existing):
-    a = {email(incoming.get(k)) for k in ["primary_email", "alternate_email"]} - {""}
-    b = {email(existing.get(k)) for k in ["primary_email", "alternate_email"]} - {""}
-    b.update(email(address) for address in existing.get("preserved_emails", []) if address)
-    if incoming.get("primary_email") and email(incoming["primary_email"]) == email(
-        existing.get("primary_email")
-    ):
+@dataclass(frozen=True)
+class ContactIdentity:
+    name: str
+    organization: str
+    primary_email: str
+    addresses: frozenset[str]
+
+
+def contact_identity(data):
+    return ContactIdentity(
+        name=normalized(contact_name(data.get("display_name"))),
+        organization=normalized(clean(data.get("organization"))),
+        primary_email=email(data.get("primary_email")),
+        addresses=frozenset(contact_addresses(data)),
+    )
+
+
+def needs_name_review(incoming: ContactIdentity, existing: ContactIdentity):
+    return (
+        bool(incoming.name)
+        and incoming.name == existing.name
+        and (not incoming.addresses or not existing.addresses)
+        and (
+            not incoming.organization
+            or not existing.organization
+            or incoming.organization == existing.organization
+        )
+    )
+
+
+def duplicate_match(incoming: ContactIdentity, existing: ContactIdentity):
+    if incoming.primary_email and incoming.primary_email == existing.primary_email:
         return "exact_email", 1.0, "Exact email match after trimming and lowercasing"
-    if a & b:
+    if incoming.addresses & existing.addresses:
         return (
             "alternate_email",
             0.98,
-            "Primary or alternate email matches an existing address",
+            "Primary, alternate, or preserved email matches an existing address",
         )
-    name_a, name_b = normalized(incoming.get("display_name")), normalized(
-        existing.get("display_name")
-    )
-    org_a, org_b = normalized(incoming.get("organization")), normalized(
-        existing.get("organization")
-    )
-    same_org = bool(org_a and org_a == org_b)
+    name_a, name_b = incoming.name, existing.name
+    same_org = bool(incoming.organization and incoming.organization == existing.organization)
     if name_a and name_a == name_b and same_org:
         return "name_organization", 0.85, "Same normalized name and organization"
+    if needs_name_review(incoming, existing):
+        return "name_only", 0.7, "Same name without enough email or organization information to distinguish the contacts"
     if name_a and name_b and SequenceMatcher(None, name_a, name_b).ratio() >= 0.82:
         if same_org:
             return (
@@ -423,7 +469,8 @@ def duplicate_match(incoming, existing):
 
 def normalize_row(raw, mapping):
     data = {
-        field: " ".join(str(raw.get(header, "") or "").split())
+        field: str(raw.get(header, "") or "").strip() if field == "notes"
+        else " ".join(str(raw.get(header, "") or "").split())
         for field, header in mapping.items()
         if header
     }
@@ -431,7 +478,8 @@ def normalize_row(raw, mapping):
         data["display_name"] = " ".join(
             [data.get("first_name", ""), data.get("last_name", "")]
         ).strip()
-    if not data.get("first_name") and data["display_name"]:
+    data["display_name"] = contact_name(data["display_name"])
+    if not (data.get("first_name") or data.get("last_name")) and data["display_name"]:
         parts = data["display_name"].split(" ", 1)
         data["first_name"], data["last_name"] = parts[0], (
             parts[1] if len(parts) > 1 else ""
@@ -451,13 +499,14 @@ def normalize_row(raw, mapping):
     for field in ["primary_email", "alternate_email"]:
         try:
             contact_email(data[field], optional=True)
-        except Exception:
+        except HTTPException:
             errors.append(f"{field}: enter a valid email address")
-    if not data["display_name"] and not data["primary_email"]:
+    address = data["primary_email"] or data["alternate_email"]
+    if not data["display_name"] and not address:
         errors.append("Missing all usable identity fields")
     if not data["display_name"]:
-        data["display_name"] = data["primary_email"]
-    data["status"] = data.get("status") or "prospective"
+        data["display_name"] = address
+    data["status"] = data.get("status", "").lower() or "prospective"
     if data["status"] not in {
         "prospective",
         "contacted",
@@ -467,11 +516,13 @@ def normalize_row(raw, mapping):
         "inactive",
     }:
         errors.append("Invalid judge status")
-    data["do_not_contact"] = str(data.get("do_not_contact", "")).lower() in {
-        "true",
-        "yes",
-        "1",
-    }
+    preference = data.get("do_not_contact", "").lower()
+    if preference not in {"", "true", "yes", "1", "false", "no", "0"}:
+        errors.append("Do not contact must be yes or no, true or false, or 1 or 0")
+    data["do_not_contact"] = preference in {"true", "yes", "1"}
+    for field in ("qualifications", "categories"):
+        if any(len(clean(value).strip()) > 200 for value in data[field]):
+            errors.append(f"{field}: each value must be at most 200 characters")
     limits = {
         "first_name": 200,
         "last_name": 200,
@@ -482,7 +533,8 @@ def normalize_row(raw, mapping):
         "notes": 20000,
     }
     for field, limit in limits.items():
-        if len(data.get(field, "")) > limit:
+        value = data.get(field, "")
+        if max(len(value), len(clean(value))) > limit:
             errors.append(f"{field} exceeds {limit} characters")
     return data, errors
 
@@ -497,15 +549,10 @@ def merge_data(db, survivor, incoming, decisions, actor, row=None, other=None):
             "notes",
         }:
             fail("invalid_merge_field", f"Cannot select a scalar value for {field}.")
-    emails = set(
-        before.get("preserved_emails", []) + incoming.get("preserved_emails", [])
-    )
-    for source in [before, incoming]:
-        emails.update(
-            email(source.get(k))
-            for k in ["primary_email", "alternate_email"]
-            if source.get(k)
-        )
+    incoming_addresses = contact_addresses(incoming)
+    if row is not None:
+        ensure_email_ownership(db, incoming_addresses, survivor.id)
+    emails = contact_addresses(before) | incoming_addresses
     for field in FIELDS:
         if field in {
             "qualifications",
@@ -519,15 +566,21 @@ def merge_data(db, survivor, incoming, decisions, actor, row=None, other=None):
             not getattr(survivor, field, "") and decisions.get(field) != "existing"
         ):
             if field in incoming:
-                setattr(survivor, field, incoming[field])
+                value = incoming[field]
+                if row is not None and field == "display_name":
+                    value = contact_name(value)
+                setattr(survivor, field, value)
     survivor.do_not_contact = bool(
         survivor.do_not_contact or incoming.get("do_not_contact")
     )
     survivor.preserved_emails = sorted(
-        emails - {survivor.primary_email, survivor.alternate_email}
+        emails - {email(survivor.primary_email), email(survivor.alternate_email)}
     )
-    notes = [n for n in [survivor.notes, incoming.get("notes", "")] if n]
-    survivor.notes = "\n\n".join(dict.fromkeys(notes))
+    incoming_note = incoming.get("notes", "")
+    if row is not None:
+        incoming_note = clean(incoming_note)
+    if incoming_note and f"\n\n{incoming_note}\n\n" not in f"\n\n{survivor.notes}\n\n":
+        survivor.notes = "\n\n".join(filter(None, (survivor.notes, incoming_note)))
     survivor.source = "\n".join(
         dict.fromkeys(
             [
@@ -536,8 +589,9 @@ def merge_data(db, survivor, incoming, decisions, actor, row=None, other=None):
             ]
         )
     )
-    add_relations(db, survivor, incoming)
     if other:
+        if other.last_contacted_at and (not survivor.last_contacted_at or other.last_contacted_at > survivor.last_contacted_at):
+            survivor.last_contacted_at = other.last_contacted_at
         # Historical campaign recipients remain attached to the retained tombstone, preserving immutable previews.
         for engagement in db.scalars(
             select(Engagement).where(Engagement.judge_id == other.id)
@@ -545,18 +599,27 @@ def merge_data(db, survivor, incoming, decisions, actor, row=None, other=None):
             engagement.judge_id = survivor.id
         for child in db.scalars(select(Judge).where(Judge.merged_into_id == other.id)):
             child.merged_into_id = survivor.id
-        for link, column in [
-            (JudgeQualification, "qualification_id"),
-            (JudgeCategory, "category_id"),
+        for link, column, detail_field in [
+            (JudgeQualification, "qualification_id", "proficiency"),
+            (JudgeCategory, "category_id", "eligibility_status"),
         ]:
             for relation in db.scalars(select(link).where(link.judge_id == other.id)):
-                target = db.get(link, (survivor.id, getattr(relation, column)))
+                relation_id = getattr(relation, column)
+                detail = getattr(relation, detail_field)
+                target = db.get(link, (survivor.id, relation_id))
                 if target:
+                    if not getattr(target, detail_field):
+                        setattr(target, detail_field, detail)
                     target.notes = "\n".join(
                         dict.fromkeys(filter(None, [target.notes, relation.notes]))
                     )
+                else:
+                    db.add(link(judge_id=survivor.id, notes=relation.notes,
+                                **{column: relation_id, detail_field: detail}))
         other.merged_into_id = survivor.id
         other.do_not_contact = True
+    else:
+        add_relations(db, survivor, incoming)
     survivor.updated_by = actor.id
     db.flush()
     after = judge_views(db, [survivor])[0]

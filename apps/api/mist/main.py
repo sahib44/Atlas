@@ -379,7 +379,7 @@ def judge_history(
     elif kind == "merges":
         stmt = (
             select(MergeEvent)
-            .where(MergeEvent.survivor_judge_id == id)
+            .where(MergeEvent.survivor_judge_id.in_(linked_ids))
             .order_by(MergeEvent.created_at.desc())
         )
     elif kind == "imports":

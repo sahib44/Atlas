@@ -464,9 +464,23 @@ def candidate(id: UUID, user=Depends(require("judges")), db=Depends(get_db)):
 
 def merge_recruitment_contacts(db, survivor, other, actor):
     """Keep managed requests visible after a merge without dropping either request."""
-    rows = list(db.scalars(select(PilotNomination).where(
+    records = db.execute(select(PilotNomination, PilotCompetition).join(
+        PilotCompetition, PilotCompetition.id == PilotNomination.pilot_id,
+    ).where(
         PilotNomination.judge_id.in_([survivor.id, other.id]),
-    )))
+    )).all()
+    for request, competition in records:
+        if (request.review_status not in {"pending", "approved"} or request.status == "declined"
+                or competition.deleted_at or competition.activation_status != "active"):
+            continue
+        owner_id = request.judge_id
+        opposite_id = other.id if owner_id == survivor.id else survivor.id
+        year = competition.event_year
+        if (not db.scalar(select(tournament_archive(owner_id, year)))
+                and db.scalar(select(tournament_archive(opposite_id, year)))):
+            fail("request_merge_conflict",
+                 f"The merge would archive an active request in {year}. Resolve the archived or active request before merging.", 409)
+    rows = [request for request, _ in records]
     surviving = {row.pilot_id: row for row in rows if row.judge_id == survivor.id}
     for row in rows:
         if row.judge_id != other.id or row.review_status is None:

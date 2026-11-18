@@ -39,7 +39,7 @@ export function validateMapping(mapping: Record<string, string>) {
   if (new Set(used).size !== used.length)
     return "Each CSV column can only be mapped once.";
   if (
-    !["primary_email", "display_name", "first_name", "last_name"].some(
+    !["primary_email", "alternate_email", "display_name", "first_name", "last_name"].some(
       (k) => mapping[k],
     )
   )
@@ -48,11 +48,12 @@ export function validateMapping(mapping: Record<string, string>) {
 }
 export function ImportSteps({ step }: { step: number }) {
   return (
-    <ol className="steps">
+    <ol className="steps" aria-label="Import progress">
       {["Upload CSV", "Map columns", "Analyze & review", "Commit import"].map(
         (s, i) => (
           <li
             key={s}
+            aria-current={step === i + 1 ? "step" : undefined}
             className={
               step === i + 1 ? "current" : step > i + 1 ? "complete" : ""
             }
@@ -137,6 +138,13 @@ export function ImportWizard() {
     !!id && ["analyzed", "committed"].includes(batch.data?.status),
   );
   const [showCommit, setShowCommit] = useState(false);
+  const operation = action.isPending ? action.variables?.path.split("/").pop() : undefined;
+  const progress = operation && ({
+    imports: "Uploading CSV…",
+    mapping: "Saving column mapping…",
+    analyze: "Analyzing rows…",
+    commit: "Committing reviewed rows…",
+  } as Record<string, string>)[operation];
   useEffect(() => {
     if (batch.data) setMapping(batch.data.mapping);
   }, [batch.data?.id]);
@@ -166,6 +174,7 @@ export function ImportWizard() {
         }
       />
       <ImportSteps step={step} />
+      {progress && <p className="caption" role="status">{progress}</p>}
       <ErrorBox error={error || batch.error} />
       {id && batch.isPending ? (
         <Loading />
@@ -331,7 +340,7 @@ export function ImportWizard() {
                       <tr key={r.id}>
                         <td>{r.row_number}</td>
                         <td>{r.normalized_data.display_name || "—"}</td>
-                        <td>{r.normalized_data.primary_email || "—"}</td>
+                        <td>{r.normalized_data.primary_email || r.normalized_data.alternate_email || "—"}</td>
                         <td>
                           <Badge value={r.resolution} />
                         </td>
@@ -369,6 +378,9 @@ export function ImportWizard() {
             Completed {date(batch.data?.completed_at)}. Original data and merge
             decisions are preserved in the audit trail.
           </p>
+          {!!batch.data?.counts?.invalid && <p role="status">
+            {batch.data.counts.invalid} {batch.data.counts.invalid === 1 ? "row was" : "rows were"} rejected. Download the error CSV for details.
+          </p>}
           <div className="actions">
             <a className="button" href={"/api/imports/" + id + "/errors"}>
               Download error CSV
@@ -595,7 +607,7 @@ export function DuplicateDetail() {
             value={decision}
             onChange={(e) => setDecision(e.target.value)}
           >
-            <option value="merge">Merge into existing contact</option>
+            <option value="merge" disabled={!d.existing_judge_id && !d.existing_row_id}>Merge into existing contact</option>
             <option value="create">Keep as a separate contact</option>
             <option value="skip">Skip incoming row</option>
           </select>
@@ -611,7 +623,7 @@ export function DuplicateDetail() {
         <ErrorBox error={action.error} />
         <button
           className="primary"
-          disabled={!confirmed || action.isPending}
+          disabled={!confirmed || action.isPending || (decision === "merge" && !d.existing_judge_id && !d.existing_row_id)}
           onClick={async () => {
             try {
               await action.mutateAsync({

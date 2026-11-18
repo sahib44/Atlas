@@ -55,7 +55,18 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await expect(page.getByLabel("Primary Email", { exact: true })).toHaveValue(
     "primary_email",
   );
+  let continueAnalysis!: () => void;
+  const holdAnalysis = new Promise<void>(resolve => { continueAnalysis = resolve; });
+  await page.route("**/api/imports/*/analyze", async route => {
+    await holdAnalysis;
+    await route.continue();
+  }, { times: 1 });
   await page.getByRole("button", { name: "Analyze rows" }).click();
+  try {
+    await expect(page.getByRole("status").filter({ hasText: "Analyzing rows…" })).toBeVisible();
+  } finally {
+    continueAnalysis();
+  }
   await expect(
     page.getByRole("heading", { name: "Row analysis" }),
   ).toBeVisible();
@@ -102,6 +113,7 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await expect(
     page.getByRole("heading", { name: "Import complete" }),
   ).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "2 rows were rejected" })).toBeVisible();
   await expect(page.getByRole("link", { name: "View judge directory" })).toHaveCount(0);
   const contactPage = await page.request.get("/api/judges?page_size=100");
   expect(contactPage.ok()).toBe(true);

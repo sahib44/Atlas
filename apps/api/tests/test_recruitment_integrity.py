@@ -120,9 +120,8 @@ def test_contact_and_nomination_writes_detect_alternate_and_merged_addresses(dir
     assert duplicate.status_code == 409
     candidate = submit(director, first, name="Survivor Sample", address=" Former-Sample@EXAMPLE.ORG ")
     assert candidate["id"] == legacy["id"] and candidate["judge_id"] == survivor["id"]
-    ok(director.post("/api/judges", json={
-        "display_name": "Duplicate Sample", "primary_email": " ALTERNATE-SURVIVOR@EXAMPLE.ORG ",
-    }))
+    with SessionLocal.begin() as db:
+        db.add(Judge(display_name="Legacy Duplicate Sample", primary_email=" ALTERNATE-SURVIVOR@EXAMPLE.ORG "))
     conflict = director.post("/api/recruitment", json=payload(first, "Survivor Sample", "alternate-survivor@example.org"))
     assert conflict.status_code == 409 and conflict.json()["detail"]["code"] == "contact_conflict"
 
@@ -222,6 +221,24 @@ def test_merge_refuses_same_year_archived_contact_and_live_slot(director):
     assert ok(director.get(f"/api/judges/{former['judge_id']}"))["merged_into_id"] is None
     assert ok(director.get("/api/judge-directory?event_year=2027"))["items"][0]["id"] == active["id"]
     assert ok(director.get(f"/api/recruitment/{former['id']}"))["archive_status"] == "withdrawn"
+
+
+@pytest.mark.parametrize("archive_survives", [False, True])
+def test_merge_cannot_archive_an_active_request_as_a_side_effect(director, archive_survives):
+    first, second = competition(director), competition(director, "3D Art")
+    former = submit(director, first, name="Former Judge", address="former@example.org")
+    current = submit(director, second, name="Current Judge", address="current@example.org")
+    review(director, former)
+    respond(director, former, "declined")
+    active_id, archived_id = current["judge_id"], former["judge_id"]
+    survivor, merged = (archived_id, active_id) if archive_survives else (active_id, archived_id)
+    response = director.post(f"/api/judges/{survivor}/merge", json={
+        "merged_judge_id": merged, "field_decisions": {}, "confirmed": True,
+    })
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "request_merge_conflict"
+    assert ok(director.get(f"/api/judges/{merged}"))["merged_into_id"] is None
+    assert ok(director.get(f"/api/recruitment/{current['id']}"))["archive_status"] == ""
 
 
 def test_merged_legacy_decline_can_be_reopened_without_overwriting_canonical_request(director):

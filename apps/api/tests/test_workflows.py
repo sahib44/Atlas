@@ -8,6 +8,7 @@ from sqlalchemy import select, func
 from mist.db import SessionLocal, now
 from mist.models import *
 from mist.services import (
+    contact_identity,
     email,
     normalized,
     duplicate_match,
@@ -99,7 +100,7 @@ def test_normalization_and_sandbox():
     ],
 )
 def test_duplicate_match_levels(incoming, existing, expected):
-    assert duplicate_match(incoming, existing)[0] == expected
+    assert duplicate_match(contact_identity(incoming), contact_identity(existing))[0] == expected
 
 
 def test_unknown_template_variables():
@@ -408,16 +409,12 @@ def test_saved_lists_are_removed(director):
 
 def test_deduplicates_different_contacts_sharing_email(director):
     first = ok(director.get("/api/judges"))["items"][0]
-    duplicate = ok(
-        director.post(
-            "/api/judges",
-            json={
-                "display_name": "Fictional Alternate Record",
-                "primary_email": first["primary_email"].upper(),
-            },
-        )
-    )
-    campaign = make_campaign(director, [first["id"], duplicate["id"]])
+    with SessionLocal.begin() as db:
+        legacy = Judge(display_name="Legacy Alternate Record", primary_email=first["primary_email"].upper())
+        db.add(legacy)
+        db.flush()
+        legacy_id = str(legacy.id)
+    campaign = make_campaign(director, [first["id"], legacy_id])
     assert campaign["recipient_count"] == 1
     assert campaign["excluded"][0]["reason"] == "Duplicate normalized email"
 
