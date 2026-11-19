@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { Bell, Mail, Plus } from "lucide-react";
-import { useData, useAction, Page, Row, date, requestId } from "./api";
+import { useData, useAction, Page, Row, date, requestKey } from "./api";
 import { Back, Badge, Empty, ErrorBox, Field, Heading, Loading, Modal, Pagination, Panel } from "./ui";
 
 export function UnreadMarker({ count = 0 }: { count?: number }) {
@@ -69,12 +69,24 @@ export function SimulateIncoming() {
   const [open, setOpen] = useState(false);
   const action = useAction();
   const navigate = useNavigate();
-  const [pendingId, setPendingId] = useState(requestId());
+  const pendingRequest = useRef<{ signature: string; id: string } | null>(null);
   return <>
-    <button onClick={() => { setPendingId(requestId()); setOpen(true); }}>Simulate incoming email</button>
+    <button onClick={() => { pendingRequest.current = null; action.reset(); setOpen(true); }}>Simulate incoming email</button>
     {open && <Modal title="Simulate incoming email" onClose={() => setOpen(false)}><p className="caption">Use this to test replies and ticket notifications. A real mailbox is not connected.</p><form onSubmit={async event => {
-      event.preventDefault(); const fd = new FormData(event.currentTarget);
-      try { const result = await action.mutateAsync({ path: "/inbox/simulate", body: { sender_name: fd.get("sender_name"), sender_email: fd.get("sender_email"), subject: fd.get("subject"), body: fd.get("body"), request_id: pendingId } }); setOpen(false); navigate(result.judge_id ? `/campaigns?judge=${result.judge_id}` : result.href); } catch {}
+      event.preventDefault();
+      if (action.isPending) return;
+      const fd = new FormData(event.currentTarget);
+      const payload = {
+        sender_name: fd.get("sender_name"),
+        sender_email: fd.get("sender_email"),
+        subject: fd.get("subject"),
+        body: fd.get("body"),
+      };
+      try {
+        const result = await action.mutateAsync({ path: "/inbox/simulate", body: { ...payload, request_id: requestKey(pendingRequest, payload) } });
+        setOpen(false);
+        navigate(result.judge_id ? `/campaigns?judge=${result.judge_id}` : result.href);
+      } catch {}
     }}>
       <Field label="Sender name"><input name="sender_name" /></Field><Field label="Sender email"><input name="sender_email" type="email" required /></Field><Field label="Subject"><input name="subject" required /></Field><Field label="Message"><textarea name="body" required rows={5} /></Field>
       <ErrorBox error={action.error} /><button className="primary" disabled={action.isPending}>Receive sandbox email</button>

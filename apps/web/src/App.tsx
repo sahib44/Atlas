@@ -28,7 +28,8 @@ import {
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { SessionScope, isAccessError, useData, useAction, User, Page, can, label } from "./api";
+import { SessionScope, useSession, useData, useAction, User, Page, can, label } from "./api";
+import { useQueryClient } from "@tanstack/react-query";
 import { Field, ErrorBox, Loading, HistoryBack, Modal } from "./ui";
 import { Dashboard, AuditPage } from "./Overview";
 import { JudgeConversation, Notifications } from "./Inbox";
@@ -284,7 +285,18 @@ function BackgroundNotice() {
   ) : null;
 }
 export default function App() {
-  const auth = useData<User>("/auth/me");
+  const auth = useSession();
+  const cache = useQueryClient();
+  const user = auth.data;
+  const scope = user ? JSON.stringify([user.id, user.role, [...user.permissions].sort()]) : "";
+  const previousScope = useRef("");
+  useEffect(() => {
+    const previous = previousScope.current;
+    if (previous && previous !== scope) {
+      cache.removeQueries({ predicate: query => query.queryKey[1] === previous });
+    }
+    previousScope.current = scope;
+  }, [cache, scope]);
   const action = useAction();
   const [menu, setMenu] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
@@ -309,21 +321,20 @@ export default function App() {
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, []);
   if (auth.isPending) return <Loading />;
-  if (!auth.data || isAccessError(auth.error))
+  if (!user)
     return (
       <Routes>
         <Route path="/login" element={<Login theme={theme} onChangeTheme={setTheme} />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
-  const user = auth.data;
   const signOut = () => action.mutate({ path: "/auth/logout" });
   const closeNavigation = () => {
     setMenu(false);
     requestAnimationFrame(() => menuTrigger.current?.focus());
   };
   return (
-    <SessionScope.Provider value={JSON.stringify([user.id, user.role, [...user.permissions].sort()])}>
+    <SessionScope.Provider key={scope} value={scope}>
     <Auth.Provider value={user}>
       <BackgroundNotice />
       <div className={collapsed ? "app sidebar-collapsed" : "app"}>

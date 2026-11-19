@@ -20,7 +20,22 @@ test("an open ticket stops displaying private content when access is revoked", a
       await page.goto(`/tickets/${ticket.id}`);
       const content = page.getByText("Confidential ticket content for this test.", { exact: true });
       await expect(content).toBeVisible();
-      await setAccess([]);
+      let resumeAuth!: () => void;
+      const heldAuth = new Promise<void>(resolve => { resumeAuth = resolve; });
+      await page.route("**/api/auth/me", async route => {
+        await heldAuth;
+        await route.continue();
+      });
+      try {
+        const denied = page.waitForResponse(response =>
+          response.url().endsWith(`/api/tickets/${ticket.id}`) && response.status() === 403,
+        );
+        await setAccess([]);
+        await denied;
+        await expect(content).toHaveCount(0, { timeout: 2000 });
+      } finally {
+        resumeAuth();
+      }
       await expect(content).toHaveCount(0);
       await expect(page.getByRole("heading", { name: "Access restricted" })).toBeVisible();
     } finally {

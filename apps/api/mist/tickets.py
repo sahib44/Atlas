@@ -1,5 +1,5 @@
 from datetime import timedelta
-from uuid import UUID, uuid5
+from uuid import UUID, uuid4, uuid5
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select, or_, update
 from .db import get_db, now
@@ -125,12 +125,29 @@ def tickets(
 @router.post("/tickets", response_model=ObjectView)
 def create(data: TicketIn, user=Depends(ticket_user), db=Depends(get_db)):
     address = contact_email(data.requester_email)
+    name, subject, body = clean(data.requester_name), clean(data.subject), clean(data.body)
+    ticket_id = uuid5(user.id, f"ticket-create:{data.request_id}") if data.request_id else uuid4()
+    if data.request_id:
+        # Serialize retries before testing the deterministic ticket ID.
+        db.execute(select(func.pg_advisory_xact_lock(int.from_bytes(ticket_id.bytes[:8], "big", signed=True))))
+        existing = db.get(Ticket, ticket_id)
+        if existing:
+            initial_body = db.scalar(
+                select(TicketMessage.body)
+                .where(TicketMessage.ticket_id == ticket_id, TicketMessage.message_type == "requester_message")
+                .order_by(TicketMessage.created_at, TicketMessage.id)
+                .limit(1)
+            )
+            if (existing.requester_email, existing.requester_name, existing.subject, initial_body) != (address, name, subject, body):
+                fail("request_reused", "This request ID was already used for a different ticket.", 409)
+            return serialize(existing)
     number = db.scalar(select(ticket_sequence.next_value()))
     ticket = Ticket(
+        id=ticket_id,
         public_number=f"MD-{number:06d}",
-        requester_name=clean(data.requester_name),
+        requester_name=name,
         requester_email=address,
-        subject=clean(data.subject),
+        subject=subject,
         source="simulated_email",
         created_by=user.id,
     )
@@ -142,7 +159,7 @@ def create(data: TicketIn, user=Depends(ticket_user), db=Depends(get_db)):
             message_type="requester_message",
             sender_name=ticket.requester_name,
             sender_email=address,
-            body=clean(data.body),
+            body=body,
             created_by=user.id,
         )
     )

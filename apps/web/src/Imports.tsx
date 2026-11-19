@@ -165,6 +165,9 @@ export function ImportWizard() {
       return null;
     }
   }
+  if (id && !batch.data && !batch.isPending) {
+    return <><Back to="/imports">All imports</Back><ErrorBox error={batch.error} /></>;
+  }
   return (
     <>
       <Back to="/imports">All imports</Back>

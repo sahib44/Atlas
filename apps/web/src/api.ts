@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext } from "react";
 
 export const SessionScope = createContext("");
+const sessionQueryKey = ["/auth/me"] as const;
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -31,9 +32,11 @@ export async function api<T = any>(
   path: string,
   method = "GET",
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch("/api" + path, {
     method,
+    signal,
     credentials: "same-origin",
     headers: {
       "X-MIST-Request": "1",
@@ -57,18 +60,49 @@ export async function api<T = any>(
   }
   return response.json();
 }
+
+export function useSession() {
+  return useQuery<User | null>({
+    queryKey: sessionQueryKey,
+    queryFn: async ({ signal }) => {
+      try {
+        return await api<User>("/auth/me", "GET", undefined, signal);
+      } catch (error) {
+        // Being signed out is a resolved session state, so a recheck keeps the form mounted.
+        if (isAccessError(error)) return null;
+        throw error;
+      }
+    },
+    refetchInterval: query => query.state.data ? 3000 : false,
+  });
+}
+
 export function useData<T = any>(path: string, enabled = true) {
   const scope = useContext(SessionScope);
-  return useQuery<T>({
+  const cache = useQueryClient();
+  const query = useQuery<T>({
     queryKey: [path, scope],
-    queryFn: () => api<T>(path),
+    queryFn: async ({ signal }) => {
+      try {
+        return await api<T>(path, "GET", undefined, signal);
+      } catch (error) {
+        if (isAccessError(error)) {
+          void cache.invalidateQueries({ queryKey: sessionQueryKey }, { cancelRefetch: false });
+        }
+        throw error;
+      }
+    },
     enabled,
     retry: false,
     refetchInterval:
-      ["/auth/me", "/audit-events", "/recruitment", "/outbox", "/campaigns", "/notifications", "/conversations", "/competitions", "/judge-directory", "/dashboard", "/tickets"].some(prefix => path.startsWith(prefix))
+      ["/audit-events", "/recruitment", "/outbox", "/campaigns", "/notifications", "/conversations", "/competitions", "/judge-directory", "/dashboard", "/tickets", "/imports", "/duplicates", "/judges", "/recipient-search"].some(prefix => path.startsWith(prefix))
         ? 3000
         : false,
   });
+  // A failed authorization check can leave the previous successful value in the cache.
+  return isAccessError(query.error) || (query.error instanceof ApiError && query.error.status === 404)
+    ? { ...query, data: undefined }
+    : query;
 }
 export function useAction() {
   const cache = useQueryClient();
@@ -89,6 +123,11 @@ export function useAction() {
         return;
       }
       return cache.invalidateQueries();
+    },
+    onError: (_error, variables) => {
+      if (variables.path !== "/auth/login") {
+        void cache.invalidateQueries(undefined, { cancelRefetch: false });
+      }
     },
   });
 }
@@ -148,4 +187,12 @@ export function requestId() {
     "",
   );
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+export function requestKey(ref: { current: { signature: string; id: string } | null }, payload: object) {
+  const signature = JSON.stringify(payload);
+  if (!ref.current || ref.current.signature !== signature) {
+    ref.current = { signature, id: requestId() };
+  }
+  return ref.current.id;
 }

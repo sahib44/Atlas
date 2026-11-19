@@ -164,6 +164,7 @@ class OfficialAssignmentIn(Input):
 
 
 class TicketIn(Input):
+    request_id: UUID | None = None
     requester_name: str = Field(min_length=1, max_length=200)
     requester_email: str = Field(min_length=1, max_length=254)
     subject: str = Field(min_length=1, max_length=500)

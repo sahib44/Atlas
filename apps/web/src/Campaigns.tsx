@@ -400,6 +400,7 @@ export function CampaignDetail() {
           {c.status === "draft" && (
             <button
               className="primary"
+              disabled={action.isPending}
               onClick={() =>
                 action.mutate({ path: "/campaigns/" + id + "/submit" })
               }
@@ -409,6 +410,7 @@ export function CampaignDetail() {
           )}
           {c.status === "pending_approval" && can(user, "approve") && (
             <ConfirmButton
+              disabled={action.isPending}
               question={`Approve ${c.recipient_count} individual sandbox emails?`}
               onConfirm={() =>
                 action.mutate({ path: "/campaigns/" + id + "/approve" })
@@ -419,6 +421,7 @@ export function CampaignDetail() {
           )}
           {c.status === "approved" && (
             <ConfirmButton
+              disabled={action.isPending}
               question={`Queue ${c.recipient_count} individual sandbox messages?`}
               onConfirm={() =>
                 action.mutate({ path: "/campaigns/" + id + "/queue" })
@@ -430,6 +433,7 @@ export function CampaignDetail() {
           {!["completed", "partially_failed", "cancelled"].includes(c.status) &&
             can(user, "approve") && (
               <ConfirmButton
+                disabled={action.isPending}
                 question="Cancel this campaign and stop all unsent messages?"
                 onConfirm={() =>
                   action.mutate({ path: "/campaigns/" + id + "/cancel" })

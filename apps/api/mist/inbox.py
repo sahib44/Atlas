@@ -8,7 +8,7 @@ from .auth import require, current_user, allowed, fail
 from .db import get_db, now
 from .models import Judge, Recipient, Campaign, InboundMessage, Notification, PilotCompetition, Ticket, TicketMessage, Committee, ticket_sequence
 from .schemas import IncomingEmail, ConversationRead, Page
-from .services import get, serialize, contact_email, clean, email_address_matches
+from .services import audit, get, serialize, contact_email, clean, email_address_matches
 
 router = APIRouter(prefix="/api")
 
@@ -172,12 +172,33 @@ def read_conversation(id: UUID, data: ConversationRead, user=Depends(require("ca
     return {"ok": True}
 
 
+def incoming_result(message):
+    href = "/campaigns"
+    if message.judge_id:
+        href = f"/campaigns/conversations/judges/{message.judge_id}"
+    elif message.ticket_id:
+        href = f"/tickets/{message.ticket_id}"
+    return {
+        "id": str(message.id),
+        "judge_id": str(message.judge_id) if message.judge_id else None,
+        "ticket_id": str(message.ticket_id) if message.ticket_id else None,
+        "href": href,
+    }
+
+
 @router.post("/inbox/simulate")
 def receive(data: IncomingEmail, user=Depends(require("campaigns")), db=Depends(get_db)):
+    address = contact_email(data.sender_email)
+    sender_name = clean(data.sender_name).strip()
+    subject, body = clean(data.subject), clean(data.body)
+    db.execute(select(func.pg_advisory_xact_lock(int.from_bytes(data.request_id.bytes[:8], "big", signed=True))))
     existing = db.scalar(select(InboundMessage).where(InboundMessage.request_id == data.request_id))
     if existing:
-        return {"id": str(existing.id), "judge_id": str(existing.judge_id) if existing.judge_id else None, "ticket_id": str(existing.ticket_id) if existing.ticket_id else None}
-    address = contact_email(data.sender_email)
+        if ((existing.sender_email, existing.subject, existing.body) != (address, subject, body)
+                or (sender_name and sender_name != existing.sender_name)
+                or (data.campaign_recipient_id and data.campaign_recipient_id != existing.campaign_recipient_id)):
+            fail("request_reused", "This request ID was already used for a different incoming message.", 409)
+        return incoming_result(existing)
     matches = list(db.scalars(select(Judge).where(
         Judge.merged_into_id.is_(None), email_address_matches([address]),
     ).limit(2)))
@@ -196,8 +217,8 @@ def receive(data: IncomingEmail, user=Depends(require("campaigns")), db=Depends(
         fail("contact_conflict", "Choose a sent message to identify which judge replied.", 409)
     elif judge:
         recipient = db.scalar(select(Recipient).where(Recipient.judge_id.in_(contact_family(judge.id)), Recipient.recipient_email == address, Recipient.status == "sent").order_by(Recipient.sent_at.desc()).limit(1))
-    name = clean(data.sender_name).strip() or (judge.display_name if judge else address)
-    message = InboundMessage(judge_id=judge.id if judge else None, campaign_recipient_id=recipient.id if recipient else None, sender_name=name, sender_email=address, subject=clean(data.subject), body=clean(data.body), request_id=data.request_id)
+    name = sender_name or (judge.display_name if judge else address)
+    message = InboundMessage(judge_id=judge.id if judge else None, campaign_recipient_id=recipient.id if recipient else None, sender_name=name, sender_email=address, subject=subject, body=body, request_id=data.request_id)
     db.add(message)
     if judge:
         campaign = db.get(Campaign, recipient.campaign_id) if recipient else None
@@ -206,7 +227,6 @@ def receive(data: IncomingEmail, user=Depends(require("campaigns")), db=Depends(
         notification = notify(db, "judge_reply", f"{judge.display_name} replied", message.subject, f"/campaigns?judge={judge.id}", judge_id=judge.id)
         # The same timestamp lets the read cursor acknowledge the associated alert.
         notification.created_at = message.created_at
-        href = f"/campaigns/conversations/judges/{judge.id}"
     else:
         from .tickets import ticket_scope
         possible = db.scalars(ticket_scope(user).where(Ticket.requester_email == address).order_by(Ticket.created_at.desc())).all()
@@ -219,15 +239,18 @@ def receive(data: IncomingEmail, user=Depends(require("campaigns")), db=Depends(
             ticket = Ticket(public_number=f"MD-{number:06d}", requester_name=name, requester_email=address, subject=message.subject, source="simulated_email", created_by=user.id)
             db.add(ticket)
             db.flush()
+            audit(db, user, "ticket.created", ticket, "Incoming competitions ticket created")
         else:
+            previous_status = ticket.status
             ticket.last_message_at = now()
             ticket.status = "waiting_on_organizer"
             ticket.resolved_at, ticket.closed_at, ticket.auto_close_at = None, None, None
             from .ticket_flow import changed
             changed(db, ticket)
+            audit(db, user, "ticket.requester_replied", ticket, "Received a requester reply",
+                  before={"status": previous_status}, after={"status": ticket.status})
         message.ticket_id = ticket.id
         db.add(TicketMessage(ticket_id=ticket.id, message_type="requester_message", sender_name=name, sender_email=address, body=message.body, created_by=user.id))
         notify(db, "ticket", f"Ticket email: {name}", message.subject, f"/tickets/{ticket.id}", ticket_id=ticket.id)
-        href = f"/tickets/{ticket.id}"
     db.commit()
-    return {"id": str(message.id), "judge_id": str(judge.id) if judge else None, "ticket_id": str(message.ticket_id) if message.ticket_id else None, "href": href}
+    return incoming_result(message)

@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Link, useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { Archive, ArrowLeft, Check, Clock, Forward, ListChecks, Lock, Mail, Play, Plus, Search, Send, ShieldCheck } from "lucide-react";
-import { useData, useAction, Page, Row, can, label, date, requestId } from "./api";
+import { useData, useAction, Page, Row, can, label, date, requestKey } from "./api";
 import { useUser } from "./App";
 import { Heading, Panel, Loading, ErrorBox, Empty, Badge, Pagination, Field, Modal } from "./ui";
 import { WorkspacePagination } from "./JudgeWorkspace";
@@ -123,11 +123,23 @@ export function Tickets() {
 export function TicketNew() {
   const action = useAction();
   const navigate = useNavigate();
+  const creationRequest = useRef<{ signature: string; id: string } | null>(null);
   return <>
     <Heading title="Simulate a ticket email" />
     <Panel title="Incoming message"><form onSubmit={async event => {
-      event.preventDefault(); const fd = new FormData(event.currentTarget);
-      try { const result = await action.mutateAsync({ path: "/tickets", body: { requester_name: fd.get("name"), requester_email: fd.get("email"), subject: fd.get("subject"), body: fd.get("body") } }); navigate(`/tickets/${result.id}`); } catch {}
+      event.preventDefault();
+      if (action.isPending) return;
+      const fd = new FormData(event.currentTarget);
+      const payload = {
+        requester_name: fd.get("name"),
+        requester_email: fd.get("email"),
+        subject: fd.get("subject"),
+        body: fd.get("body"),
+      };
+      try {
+        const result = await action.mutateAsync({ path: "/tickets", body: { ...payload, request_id: requestKey(creationRequest, payload) } });
+        navigate(`/tickets/${result.id}`);
+      } catch {}
     }}>
       <div className="form-grid"><Field label="Requester name"><input name="name" required /></Field><Field label="Requester email"><input type="email" name="email" required /></Field></div>
       <Field label="Subject"><input name="subject" required /></Field><Field label="Message body"><textarea name="body" rows={7} required /></Field>
@@ -287,11 +299,6 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
   const statusValid = !changingStatus ? false : draft.target_status === "waiting_on_requester" ? !!draft.reply.trim() && draft.mode === "messages" : draft.target_status === "waiting_on_organizer" ? !!draft.note.trim() && draft.mode === "notes" : draft.target_status === "resolved" ? !!resolutionNote : true;
   const normalValid = draft.mode === "notes" ? !!draft.note.trim() : !!draft.reply.trim() && ticket.status !== "closed";
   const valid = changingStatus ? statusValid : normalValid;
-  function requestKey(ref: React.MutableRefObject<{ signature: string; id: string } | null>, payload: unknown) {
-    const signature = JSON.stringify(payload);
-    if (ref.current?.signature !== signature) ref.current = { signature, id: requestId() };
-    return ref.current!.id;
-  }
   function changeStatus(status: string) {
     setDraft(current => ({ ...current, target_status: status, mode: status === "waiting_on_organizer" ? "notes" : ["waiting_on_requester", "resolved"].includes(status) ? "messages" : current.mode }));
     setLocalError(undefined);

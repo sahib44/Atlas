@@ -1,9 +1,13 @@
 from test_recruitment import review
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from uuid import uuid4
 from datetime import timedelta
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from mist.db import SessionLocal, now
+from mist.main import app
 from mist.models import Judge, Recipient, Outbound, Notification, DirectoryBackup, Audit
 from mist.worker import run_once
 
@@ -104,13 +108,53 @@ def test_nonjudge_email_becomes_ticket_without_creating_judge_and_is_idempotent(
     token = str(uuid4())
     first = receive(director, "not-a-judge@sample.invalid", request_id=token)
     second = receive(director, "not-a-judge@sample.invalid", request_id=token)
-    assert first["ticket_id"] == second["ticket_id"]
+    assert first == second and first["href"] == f"/tickets/{first['ticket_id']}"
+    changed = director.post("/api/inbox/simulate", json={
+        "sender_email": "not-a-judge@sample.invalid", "sender_name": "Sample Sender",
+        "subject": "Re: Invitation", "body": "Changed content.", "request_id": token,
+    })
+    assert changed.status_code == 409 and changed.json()["detail"]["code"] == "request_reused"
     assert ok(director.get("/api/tickets"))["total"] == 1
     assert ok(director.get("/api/judges"))["total"] == before
     sign_in(director, "competitions")
     assert ok(director.get("/api/tickets"))["total"] == 1
     assert ok(director.get("/api/notifications"))["items"][0]["ticket_id"] == first["ticket_id"]
     assert ok(director.get("/api/conversations"))["total"] == 0
+    activity = ok(director.get(f"/api/tickets/{first['ticket_id']}/activity"))["items"]
+    assert [event["action"] for event in activity] == ["ticket.created"]
+
+
+def test_ticket_creation_replay_keeps_one_ticket_message_alert_and_audit_event(director):
+    payload = {
+        "request_id": str(uuid4()),
+        "requester_name": "Sample Replay",
+        "requester_email": "ticket-replay@example.org",
+        "subject": "Sample ticket",
+        "body": "Initial message.",
+    }
+    start = Barrier(2, timeout=5)
+
+    def submit(client):
+        start.wait()
+        return ok(client.post("/api/tickets", json=payload))
+
+    with TestClient(app, headers={"X-MIST-Request": "1"}) as other:
+        sign_in(other, "director")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, duplicate = pool.submit(submit, director), pool.submit(submit, other)
+            created = first.result()
+            assert duplicate.result()["id"] == created["id"]
+    path = f"/api/tickets/{created['id']}"
+    ok(director.post(f"{path}/status", json={"status": "in_progress"}))
+    replayed = ok(director.post("/api/tickets", json=payload))
+    assert replayed["id"] == created["id"] and replayed["status"] == "in_progress"
+    assert director.post("/api/tickets", json={**payload, "body": "Different message."}).status_code == 409
+    assert ok(director.get("/api/tickets"))["total"] == 1
+    assert ok(director.get(f"{path}/messages"))["total"] == 1
+    notifications = ok(director.get("/api/notifications"))["items"]
+    assert [item["ticket_id"] for item in notifications if item["kind"] == "ticket"] == [created["id"]]
+    with SessionLocal() as db:
+        assert len(db.scalars(select(Audit).where(Audit.action == "ticket.created")).all()) == 1
 
 
 def test_failed_recipient_notification_identifies_exact_email(director):
@@ -198,6 +242,8 @@ def test_nonjudge_reply_joins_the_shared_competitions_ticket(director):
     assert received["ticket_id"] == private["id"]
     assert ok(director.get(f"/api/tickets/{private['id']}/messages"))["total"] == 2
     assert director.get(f"/api/tickets/{received['ticket_id']}").status_code == 200
+    activity = ok(director.get(f"/api/tickets/{private['id']}/activity"))["items"]
+    assert [event["action"] for event in activity] == ["ticket.created", "ticket.requester_replied"]
 
 
 def test_direct_email_respects_preserved_address_suppression(director):
