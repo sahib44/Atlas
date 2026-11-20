@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="14 60 132 78">
+  <title>MIST Atlas</title>
+  <defs>
+    <mask id="node-centers" maskUnits="userSpaceOnUse" x="14" y="60" width="132" height="78">
+      <rect x="14" y="60" width="132" height="78" fill="white"/>
+      <g fill="black">
+        <circle cx="25" cy="128" r="4.1"/><circle cx="53" cy="74" r="4.1"/><circle cx="57" cy="101" r="3.1"/>
+        <circle cx="80" cy="104" r="3.1"/><circle cx="103" cy="101" r="3.1"/><circle cx="107" cy="74" r="4.1"/>
+        <circle cx="135" cy="128" r="4.1"/>
+      </g>
+    </mask>
+  </defs>
+  <g fill="none" stroke="#1a022e" stroke-width="3.8" mask="url(#node-centers)">
+    <path d="M25 128 53 74 80 104 107 74 135 128M25 128 57 101 80 104 103 101 135 128M53 74 57 101M107 74 103 101" stroke-linejoin="round"/>
+    <circle cx="25" cy="128" r="6"/><circle cx="53" cy="74" r="6"/><circle cx="57" cy="101" r="5"/>
+    <circle cx="80" cy="104" r="5"/><circle cx="103" cy="101" r="5"/><circle cx="107" cy="74" r="6"/>
+    <circle cx="135" cy="128" r="6"/>
+  </g>
+</svg>

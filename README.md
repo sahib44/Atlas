@@ -1,9 +1,10 @@
-# MIST Deck
+# MIST Atlas
 
 A local prototype for MIST NJ organizers. Judge contacts, CSV imports, outreach,
 and competitor support otherwise live in separate workflows, making duplicate
-review, campaign approval, and follow-up difficult to track. MIST Deck brings
-those workflows and their audit trail into one application.
+review, campaign approval, and follow-up difficult to track. MIST Atlas brings
+those workflows and their audit trail into one application. The project was
+previously named MIST Deck.
 
 **Project status:** working local prototype for evaluation. The MIST team has not
 adopted it, and it has no real users or production deployment. The included
@@ -66,10 +67,10 @@ file unless separate chair/member passwords are configured:
 
 | Email | Role | Additional permissions |
 | --- | --- | --- |
-| `director@example.com` | Director | All application capabilities |
+| `director@example.com` | Director | User administration, ticket approvals, recruitment review, and operational tools |
 | `tech@example.com` | Technology Administrator | Imports, catalogs, job troubleshooting, audit; no private tickets |
-| `chair@example.com` | Competitions Chair | Everyday competition tools, approvals, pilot deletion, backed-up directory clearing |
-| `competitions@example.com` | Shared Competition Heads | Everyday competition tools and approvals; no deletion |
+| `chair@example.com` | Competitions Chair | Everyday competition tools, campaign approvals, pilot deletion, backed-up directory clearing |
+| `competitions@example.com` | Shared Competition Heads | Everyday competition tools, including submitting campaigns for chair approval |
 
 Passwords are stored as Argon2id hashes. Login creates a random, 12-hour HttpOnly,
 SameSite=Strict cookie; only its SHA-256 digest is stored. Mutation requests require
@@ -326,10 +327,9 @@ the `mist` package under `apps/api`; do not duplicate models in `apps/worker`.
   The organizer Settings catalog screen is no longer exposed. Older imported
   qualification tags remain on contact records for compatibility; competition
   assignments use a written qualification reason.
-- Campaign content and recipients are fixed after draft creation; attachments
-  can be changed while the draft is open. Approval can be
-  performed by a permitted creator; separation of duties is not mandated in the
-  prototype design.
+- Campaign content and recipients are fixed after draft creation. Attachments
+  can be changed while the draft is open. Only the Competitions Chair can
+  approve a campaign, including one they created. Queueing is a separate step.
 - Private ticket content is not exposed to a technology administrator unless a
   director separately grants `private_tickets`. Ticket-linked outbox messages and
   audit snapshots honor this boundary.

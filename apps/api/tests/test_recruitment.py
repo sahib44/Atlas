@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from mist.main import app
 from mist.worker import run_once
+from test_workflows import queue as queue_campaign
 
 
 def ok(response):
@@ -79,8 +80,7 @@ def test_chair_reviews_current_request_and_authorizes_sandbox_outreach(director)
         assert any(item["kind"] == "judge_reviewed" for item in ok(member.get("/api/notifications"))["items"])
         assert "No approved request" in draft(member, first, "rowan@example.org").text
         campaign = ok(draft(member, second, "rowan@example.org"))
-        for action in ("submit", "approve", "queue"):
-            ok(member.post(f"/api/campaigns/{campaign['id']}/{action}"))
+        queue_campaign(member, campaign)
         assert run_once("recruitment-test")
         latest = ok(member.get(path))
         assert latest["last_contacted_at"] and latest["status"] == "awaiting_response"
@@ -130,8 +130,7 @@ def test_rejection_decline_and_explicit_followup(director):
     declined = submit(director, target)
     review(director, declined)
     campaign = ok(draft(director, target, "rowan@example.org"))
-    for action in ("submit", "approve", "queue"):
-        ok(director.post(f"/api/campaigns/{campaign['id']}/{action}"))
+    queue_campaign(director, campaign)
     respond(director, declined, "declined")
     assert run_once("cancel-stale-outreach")
     outbox = ok(director.get(f"/api/outbox?campaign_id={campaign['id']}"))["items"]

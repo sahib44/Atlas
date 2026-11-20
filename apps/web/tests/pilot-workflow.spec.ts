@@ -7,7 +7,7 @@ test("pilot folder tracks judge responses and creates separate sandbox messages"
   if (!password) throw new Error("SEED_PASSWORD is required");
   const title = `MIST-hack ${Date.now()}`;
   await page.goto("/login");
-  await page.getByLabel("Email", { exact: true }).fill("director@example.com");
+  await page.getByLabel("Email", { exact: true }).fill("chair@example.com");
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("link", { name: "Competitions", exact: true }).click();
@@ -50,7 +50,7 @@ test("pilot folder tracks judge responses and creates separate sandbox messages"
   await page.getByLabel("Attachments (optional; up to five files, 5 MB each)").setInputFiles({ name: "instructions.txt", mimeType: "text/plain", buffer: Buffer.from("Sample judging instructions") });
   await page.getByLabel("Subject", { exact: true }).fill("Invitation to judge");
   await page.getByLabel("Email body").fill("Hello {{first_name}}, please join us as a judge.");
-  await page.getByRole("button", { name: "Create draft & preview" }).click();
+  await page.getByRole("button", { name: "Save draft & review" }).click();
   await expect(page.getByRole("heading", { name: "Pilot judge update" })).toBeVisible();
   await expect(page.getByRole("link", { name: "instructions.txt" })).toBeVisible();
   await expect(page.getByText("3", { exact: true }).first()).toBeVisible();

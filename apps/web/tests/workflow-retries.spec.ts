@@ -52,5 +52,7 @@ test("campaign transitions are disabled while approval submission is pending", a
   } finally {
     resume();
   }
-  await expect(page.getByRole("button", { name: "Approve campaign" })).toBeVisible();
+  await expect(page.getByText("Awaiting approval", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve campaign" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Cancel campaign" })).toBeEnabled();
 });

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
-import { Bell, Mail, Plus } from "lucide-react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Bell, ChevronRight, Mail, Plus } from "lucide-react";
 import { useData, useAction, Page, Row, date, requestKey } from "./api";
-import { Back, Badge, Empty, ErrorBox, Field, Heading, Loading, Modal, Pagination, Panel } from "./ui";
+import { Back, Badge, Empty, ErrorBox, Field, Heading, Loading, Modal, Pagination } from "./ui";
 
 export function UnreadMarker({ count = 0 }: { count?: number }) {
   return count > 0 ? <span className="unread-marker" title={`${count} unread ${count === 1 ? "reply" : "replies"}`} aria-label={`${count} unread ${count === 1 ? "reply" : "replies"}`}>!</span> : null;
@@ -26,19 +26,33 @@ export function Notifications() {
   </>;
 }
 
-export function Conversations({ search = "", judgeId = "" }: { search?: string; judgeId?: string }) {
-  const [page, setPage] = useState(1);
-  useEffect(() => setPage(1), [search, judgeId]);
-  const query = useData<Page>(`/conversations?q=${encodeURIComponent(search)}${judgeId ? `&judge_id=${judgeId}` : ""}&page=${page}`);
-  return <Panel title="Judge conversations" action={judgeId ? <Link to="/campaigns">Show all conversations</Link> : undefined}>
+export function Conversations({ search, judgeId, page, onPage, returnTo }: { search: string; judgeId: string; page: number; onPage: (page: number) => void; returnTo: string }) {
+  const params = new URLSearchParams({ q: search, page: String(page) });
+  if (judgeId) params.set("judge_id", judgeId);
+  const query = useData<Page>(`/conversations?${params}`);
+  return <section aria-label="Judge conversations">
     <ErrorBox error={query.error} />
-    {query.isPending ? <Loading /> : !query.data?.items.length ? <Empty>No conversations match this view.</Empty> : <div className="conversation-list">{query.data.items.map(item => <Link className={item.unread_count ? "conversation-row unread" : "conversation-row"} to={`/campaigns/conversations/judges/${item.id}`} key={item.id}><Mail size={18} /><span><strong>{item.name} <UnreadMarker count={item.unread_count} /></strong><small>{item.email}</small></span><span>{item.unread_count ? `${item.unread_count} new ${item.unread_count === 1 ? "message" : "messages"}` : "Open conversation"}<small>{date(item.last_message_at)}</small></span></Link>)}</div>}
-    <Pagination data={query.data} onPage={setPage} />
-  </Panel>;
+    {query.isPending ? <Loading /> : query.data?.items.length ? <div className="table-wrap outreach-table outreach-conversations">
+      <table>
+        <thead><tr><th>Judge</th><th>Replies</th><th>Last message</th></tr></thead>
+        <tbody>{query.data.items.map(item => <tr key={item.id} className={item.unread_count ? "outreach-unread" : undefined}>
+          <td><Link className="outreach-row-link" to={`/campaigns/conversations/judges/${item.id}`} state={{ workspaceReturn: returnTo }}>
+            <span className="outreach-icon"><Mail size={17} aria-hidden="true" /></span>
+            <span><strong>{item.name}</strong><small>{item.email}</small><small className="outreach-mobile-date">{date(item.last_message_at)}</small></span>
+          </Link></td>
+          <td>{item.unread_count ? <span className="badge pending_approval">{item.unread_count} unread</span> : "—"}</td>
+          <td><span className="outreach-updated">{date(item.last_message_at)}</span><ChevronRight size={17} aria-hidden="true" className="outreach-chevron" /></td>
+        </tr>)}</tbody>
+      </table>
+    </div> : query.data && <Empty>No conversations match this view.</Empty>}
+    <Pagination data={query.data} onPage={onPage} />
+  </section>;
 }
 
 export function JudgeConversation() {
   const { id = "" } = useParams();
+  const location = useLocation();
+  const workspaceReturn = location.state?.workspaceReturn || "/campaigns?view=conversations";
   const [page, setPage] = useState(1);
   const query = useData<Row>(`/conversations/judges/${id}?page=${page}`);
   const action = useAction();
@@ -54,18 +68,18 @@ export function JudgeConversation() {
   if (!query.data) return <ErrorBox error={query.error} />;
   const data = query.data;
   return <>
-    <Back to="/campaigns">Campaigns</Back>
-    <Heading title={data.judge.name} description={[data.judge.email, data.judge.phone].filter(Boolean).join(" · ")}><Link className="button primary" to="/campaigns/new" state={{ judge_ids: [data.judge.id] }}><Plus size={16} /> Compose email</Link></Heading>
+    <Back to={workspaceReturn}>Judge conversations</Back>
+    <Heading title={data.judge.name} description={[data.judge.email, data.judge.phone].filter(Boolean).join(" · ")}><Link className="button primary" to="/campaigns/new" state={{ judge_ids: [data.judge.id], workspaceReturn, composeReturn: location.pathname }}><Plus size={16} /> Compose email</Link></Heading>
     <ErrorBox error={action.error} />
     <div className="conversation-thread">{data.messages.map((message: Row) => <article key={message.id} className={`conversation-message ${message.direction}${openedUnread.has(message.id) ? " newly-opened" : ""}`}>
-      <div className="message-heading"><strong>{message.direction === "incoming" ? data.judge.name : "MIST Deck"}</strong><Badge value={message.status} /><small>{date(message.created_at)}</small></div>
+      <div className="message-heading"><strong>{message.direction === "incoming" ? data.judge.name : "MIST Atlas"}</strong><Badge value={message.status} /><small>{date(message.created_at)}</small></div>
       <small>{message.direction === "incoming" ? "From" : "To"}: {message.email}</small><h3>{message.subject}</h3><p className="message-body">{message.body}</p>{message.campaign_id && <Link to={`/campaigns/${message.campaign_id}`}>View campaign</Link>}
     </article>)}{!data.messages.length && <Empty>No email history yet.</Empty>}</div>
     <Pagination data={{ items: data.messages, total: data.total, page: data.page, page_size: data.page_size }} onPage={setPage} />
   </>;
 }
 
-export function SimulateIncoming() {
+export function SimulateIncoming({ judgeHref }: { judgeHref: (judgeId: string) => string }) {
   const [open, setOpen] = useState(false);
   const action = useAction();
   const navigate = useNavigate();
@@ -85,7 +99,7 @@ export function SimulateIncoming() {
       try {
         const result = await action.mutateAsync({ path: "/inbox/simulate", body: { ...payload, request_id: requestKey(pendingRequest, payload) } });
         setOpen(false);
-        navigate(result.judge_id ? `/campaigns?judge=${result.judge_id}` : result.href);
+        navigate(result.judge_id ? judgeHref(result.judge_id) : result.href);
       } catch {}
     }}>
       <Field label="Sender name"><input name="sender_name" /></Field><Field label="Sender email"><input name="sender_email" type="email" required /></Field><Field label="Subject"><input name="subject" required /></Field><Field label="Message"><textarea name="body" required rows={5} /></Field>

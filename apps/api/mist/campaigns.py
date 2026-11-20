@@ -255,15 +255,17 @@ def preview(
 def transition(
     id: UUID, action: str, user=Depends(require("campaigns")), db=Depends(get_db)
 ):
+    if action == "approve" and not allowed(user, "approve"):
+        fail("forbidden", "Only the Competitions Chair can approve campaigns.", 403)
     if action == "queue":
         lock_assignments(db)
     campaign = get(db, Campaign, id, True)
     before = serialize(campaign)
     required = {"submit": "draft", "approve": "pending_approval", "queue": "approved"}
     if action == "cancel":
-        if not allowed(user, "approve"):
+        if not allowed(user, "campaign_cancel"):
             fail(
-                "forbidden", "Campaign cancellation requires approval permission.", 403
+                "forbidden", "Campaign cancellation permission is required.", 403
             )
         if campaign.status in {"completed", "cancelled", "partially_failed"}:
             fail("invalid_state", "Campaign is already terminal.")
@@ -295,8 +297,6 @@ def transition(
         if action == "submit":
             campaign.status = "pending_approval"
         elif action == "approve":
-            if not allowed(user, "approve"):
-                fail("forbidden", "Campaign approval permission is required.", 403)
             campaign.status, campaign.approved_by, campaign.approved_at = (
                 "approved",
                 user.id,

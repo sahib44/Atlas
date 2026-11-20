@@ -19,7 +19,7 @@ ROLE_PERMISSIONS = {
         "judges",
         "imports",
         "campaigns",
-        "approve",
+        "campaign_cancel",
         "tickets",
         "catalogs",
         "audit",
@@ -28,27 +28,17 @@ ROLE_PERMISSIONS = {
         "jobs",
     },
     "technology_administrator": {"imports", "catalogs", "audit", "outbox", "jobs"},
-    "competitions_administrator": {
-        "judges",
-        "imports",
-        "campaigns",
-        "tickets",
-        "catalogs",
-        "outbox",
-    },
 }
 
 
 COMPETITIONS_ROLES = {"competitions_administrator", "competitions_member", "competitions_chair"}
 for role in COMPETITIONS_ROLES:
-    ROLE_PERMISSIONS[role] = {"judges", "imports", "campaigns", "approve", "tickets", "catalogs", "outbox"}
-ROLE_PERMISSIONS["competitions_chair"].update({"delete", "ticket_approve", "judge_assign", "recruitment_review"})
+    ROLE_PERMISSIONS[role] = {"judges", "imports", "campaigns", "campaign_cancel", "tickets", "catalogs", "outbox"}
+ROLE_PERMISSIONS["competitions_chair"].update({"approve", "delete", "ticket_approve", "judge_assign", "recruitment_review"})
 
 
 def allowed(user, permission):
-    return permission in ROLE_PERMISSIONS.get(user.role, set()) or (
-        permission == "approve" and "campaign_approver" in user.permissions
-    )
+    return permission in ROLE_PERMISSIONS.get(user.role, set())
 
 
 def fail(code, message, status=400):

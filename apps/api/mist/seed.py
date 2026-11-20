@@ -27,7 +27,7 @@ def seed(db):
                 email=f"{short}@example.com",
                 password_hash=hasher.hash(account_password(role)),
                 role=role,
-                permissions=["campaign_approver"] if short == "competitions" else [],
+                permissions=[],
             )
         )
     db.flush()

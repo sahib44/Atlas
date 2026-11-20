@@ -14,7 +14,7 @@ import {
   UserRoundPlus,
   Upload,
   Copy,
-  Send,
+  Mail,
   Inbox,
   LifeBuoy,
   History,
@@ -24,17 +24,19 @@ import {
   Moon,
   Sun,
   FolderKanban,
+  Eye,
+  EyeOff,
+  LoaderCircle,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { SessionScope, useSession, useData, useAction, User, Page, can, label } from "./api";
 import { useQueryClient } from "@tanstack/react-query";
-import { Field, ErrorBox, Loading, HistoryBack, Modal } from "./ui";
+import { ErrorBox, Loading, HistoryBack, Modal } from "./ui";
 import { Dashboard, AuditPage } from "./Overview";
 import { JudgeConversation, Notifications } from "./Inbox";
 import { Profile } from "./Profile";
-import brandMark from "./mist-deck-mark.svg?no-inline";
 import "./judge-workspace.css";
 import { Imports, ImportWizard, Duplicates, DuplicateDetail } from "./Imports";
 import { Campaigns, CampaignNew, CampaignDetail, Outbox } from "./Campaigns";
@@ -46,8 +48,8 @@ const JudgeRecruitment = lazy(() => import("./JudgeRecruitment").then(module => 
 const Auth = createContext<User | undefined>(undefined);
 export const useUser = () => useContext(Auth);
 const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(1),
+  email: z.string().email("Enter a valid email address."),
+  password: z.string().min(1, "Enter your password."),
 });
 const appearanceOptions = [
   { value: "light", label: "Light", icon: Sun },
@@ -123,25 +125,63 @@ function AppearanceControl({ theme, onChangeTheme }: AppearanceProps) {
     </div>
   );
 }
-function Login({ theme, onChangeTheme }: AppearanceProps) {
-  const action = useAction();
-  const navigate = useNavigate();
-  const form = useForm<z.infer<typeof loginSchema>>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { email: "", password: "" },
-  });
+function AtlasBrand({ theme, variant, alt = "" }: { theme: Theme; variant: "stacked-compact" | "compact" | "horizontal-compact"; alt?: string }) {
+  const mode = theme === "light" ? "light" : "dark";
+  const dimensions = { "stacked-compact": [284, 146], compact: [132, 78], "horizontal-compact": [284, 46] };
+  const [width, height] = dimensions[variant];
+  return <img className={`brand-symbol atlas-${variant}`} src={`/brand/atlas-${variant}-${mode}.svg`} alt={alt} width={width} height={height} />;
+}
+
+function ConstellationBackdrop() {
   return (
-    <div className="login-page">
+    <svg className="constellation-backdrop" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true" focusable="false">
+      <path d="M-50 344 122 403 249 268 346 411 254 554 104 510-50 632M122 403 104 510 160 672 254 554 314 704 450 758M346 411 426 226 560 159M249 268 426 226M254 554 450 758M314 704 160 672
+        M1490 291 1322 331 1194 242 1060 369 982 206M1490 565 1354 470 1322 331 1060 369 1164 521 1354 470 1290 650 1164 521 1015 682 923 759M1194 242 1164 521M1290 650 1434 723M1015 682 1290 650" />
+      <circle cx="122" cy="403" r="3" /><circle cx="249" cy="268" r="4" /><circle cx="346" cy="411" r="2" />
+      <circle cx="104" cy="510" r="2.5" /><circle cx="254" cy="554" r="3.5" /><circle cx="160" cy="672" r="2" />
+      <circle cx="314" cy="704" r="2.5" /><circle cx="450" cy="758" r="3" /><circle cx="426" cy="226" r="3" /><circle cx="560" cy="159" r="2" />
+      <circle cx="982" cy="206" r="2.5" /><circle cx="1194" cy="242" r="3.5" /><circle cx="1322" cy="331" r="3" />
+      <circle cx="1060" cy="369" r="2" /><circle cx="1164" cy="521" r="3.5" /><circle cx="1354" cy="470" r="2" />
+      <circle cx="1015" cy="682" r="2.5" /><circle cx="1290" cy="650" r="3" /><circle cx="923" cy="759" r="2" />
+    </svg>
+  );
+}
+
+function AccountFrame({ theme, onChangeTheme, title, description, children }: AppearanceProps & {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="login-page constellation-surface">
+      <ConstellationBackdrop />
       <div className="login-theme-toggle">
         <AppearanceControl theme={theme} onChangeTheme={onChangeTheme} />
       </div>
       <main className="login-card">
-        <div className="login-identity">
-          <img className="brand-symbol" src={brandMark} alt="" width={56} height={56} />
-          <h1>MIST Deck</h1>
-        </div>
-        <h2>Sign in</h2>
+        <h1 className="login-identity" aria-label="MIST Atlas"><AtlasBrand theme={theme} variant="stacked-compact" /></h1>
+        <h2>{title}</h2>
+        <p className="login-subtitle">{description}</p>
+        {children}
+      </main>
+    </div>
+  );
+}
+
+function Login({ theme, onChangeTheme }: AppearanceProps) {
+  const action = useAction();
+  const navigate = useNavigate();
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const form = useForm<z.infer<typeof loginSchema>>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: { email: "", password: "" },
+  });
+  const { email: emailError, password: passwordError } = form.formState.errors;
+  return (
+    <AccountFrame theme={theme} onChangeTheme={onChangeTheme} title="Sign in" description="Your MIST NJ workspace.">
         <form
+          noValidate
+          aria-busy={action.isPending}
           onSubmit={form.handleSubmit(async (values) => {
             try {
               await action.mutateAsync({ path: "/auth/login", body: values });
@@ -149,33 +189,53 @@ function Login({ theme, onChangeTheme }: AppearanceProps) {
             } catch {}
           })}
         >
-          <Field label="Email">
+          <div className="field">
+            <label htmlFor="login-email">Email</label>
             <input
+              id="login-email"
               type="email"
               autoComplete="username"
+              required
+              aria-invalid={!!emailError}
+              aria-describedby={emailError ? "login-email-error" : undefined}
               {...form.register("email")}
             />
-          </Field>
-          <Field label="Password">
-            <input
-              type="password"
-              autoComplete="current-password"
-              {...form.register("password")}
-            />
-          </Field>
-          <ErrorBox
-            error={
-              Object.values(form.formState.errors)[0]?.message || action.error
-            }
-          />
-          <button className="primary" disabled={action.isPending}>
-            Sign in
+            {emailError && <span id="login-email-error" className="login-field-error" role="alert">{emailError.message}</span>}
+          </div>
+          <div className="field">
+            <label htmlFor="login-password">Password</label>
+            <div className="login-password">
+              <input
+                id="login-password"
+                type={passwordVisible ? "text" : "password"}
+                autoComplete="current-password"
+                required
+                aria-invalid={!!passwordError}
+                aria-describedby={passwordError ? "login-password-error" : undefined}
+                {...form.register("password")}
+              />
+              <button
+                type="button"
+                className="login-password-toggle"
+                aria-controls="login-password"
+                aria-label={passwordVisible ? "Hide password" : "Show password"}
+                onClick={() => setPasswordVisible(visible => !visible)}
+              >
+                {passwordVisible ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </button>
+            </div>
+            {passwordError && <span id="login-password-error" className="login-field-error" role="alert">{passwordError.message}</span>}
+          </div>
+          <ErrorBox error={!emailError && !passwordError ? action.error : null} />
+          <button type="submit" className="primary login-submit" disabled={action.isPending}>
+            {action.isPending && <LoaderCircle size={17} aria-hidden="true" />}
+            {action.isPending ? "Signing in…" : "Sign in"}
           </button>
         </form>
-      </main>
-    </div>
+    </AccountFrame>
   );
 }
+
 const navGroups = [
   {
     label: "Workspace",
@@ -184,7 +244,7 @@ const navGroups = [
       ["/competitions", "Competitions", FolderKanban, "judges"],
       ["/recruitment", "Judge Recruitment", UserRoundPlus, "judges"],
       ["/judges", "Judge Directory", Users, "judges"],
-      ["/campaigns", "Campaigns", Send, "campaigns"],
+      ["/campaigns", "Email Outreach", Mail, "campaigns"],
       ["/tickets", "Tickets", LifeBuoy, "tickets"],
     ],
   },
@@ -348,15 +408,14 @@ export default function App() {
               title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
               onClick={() => setCollapsed((value) => !value)}
             >
-              <img className="brand-symbol" src={brandMark} alt="" width={42} height={42} />
-              <span className="brand-copy">MIST Deck</span>
+              <AtlasBrand theme={theme} variant={collapsed ? "compact" : "horizontal-compact"} />
             </button>
           </div>
           <WorkspaceNavigation user={user} />
           <WorkspaceAccount user={user} onSignOut={signOut} />
         </aside>
         {menu && <Modal
-          title={<span className="drawer-brand"><img className="brand-symbol" src={brandMark} alt="" width={32} height={32} /> MIST Deck</span>}
+          title={<span className="drawer-brand"><AtlasBrand theme={theme} variant="horizontal-compact" alt="MIST Atlas" /></span>}
           closeLabel="Close navigation"
           className="navigation-drawer"
           onClose={closeNavigation}
@@ -383,7 +442,8 @@ export default function App() {
               <AppearanceControl theme={theme} onChangeTheme={setTheme} />
             </div>
           </header>
-          <main className="content">
+          <main className="content constellation-surface">
+            <ConstellationBackdrop />
             <Routes>
               <Route
                 path="/login"
@@ -531,7 +591,7 @@ export default function App() {
             </Routes>
           </main>
           <footer className="footer">
-            MIST Deck <span>Local prototype · Sandbox email</span>
+            MIST Atlas <span>Local prototype · Sandbox email</span>
           </footer>
         </div>
       </div>

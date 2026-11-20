@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { expectReadable, selectAppearance } from "./appearance-helpers";
+import { mutationHeaders, writeJson } from "./recruitment-helpers";
 import path from "node:path";
 
 test("organizer imports, reviews, campaigns, and resolves a support ticket", async ({
-  page, playwright, baseURL,
+  page, browser, playwright, baseURL,
 }) => {
   page.on("dialog", (dialog) => dialog.accept());
   const stamp = Date.now();
@@ -122,21 +123,23 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   const suppressed = contacts.find((contact: any) => contact.primary_email && contact.do_not_contact);
   expect(eligible.length).toBeGreaterThan(0);
   await page.goto("/campaigns/new");
+  await page.getByRole("button", { name: "One-off email" }).click();
   for (const contact of [...eligible, ...(suppressed ? [suppressed] : [])]) {
-    await page.getByLabel("Find or add a recipient").fill(contact.primary_email);
+    await page.getByLabel("Recipient email", { exact: true }).fill(contact.primary_email);
     await page.getByRole("button", { name: `Add ${contact.primary_email}`, exact: true }).click();
   }
   await expect(page.getByLabel("Selected recipients")).not.toBeEmpty();
   await page
     .getByLabel("Campaign name", { exact: true })
     .fill("Arts invitation " + stamp);
+  await page.getByText("Event details", { exact: true }).click();
   await page.getByLabel("Event date", { exact: true }).fill(dateFromNow(30));
   await page
     .getByLabel("Response deadline", { exact: true })
     .fill(dateFromNow(14));
   await page.getByLabel("Subject", { exact: true }).fill("Invitation to judge");
   await page.getByLabel("Email body").fill("Hello {{first_name}}, please join us as a judge.");
-  await page.getByRole("button", { name: "Create draft & preview" }).click();
+  await page.getByRole("button", { name: "Save draft & review" }).click();
   if (suppressed) {
     await expect(page.getByRole("heading", { name: "Review recipient exclusions", exact: true })).toBeVisible();
     await page.getByRole("link", { name: "Continue to preview", exact: true }).click();
@@ -163,14 +166,25 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
     ).not.toContainText("{{");
   }
   await page.getByRole("button", { name: "Submit for approval" }).click();
-  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await page.locator(".sidebar").getByRole("link", { name: "Overview", exact: true }).click();
   await page.getByRole("link", { name: /Campaigns awaiting approval/ }).click();
   await expect(page).toHaveURL(/\/campaigns\?status=pending_approval$/);
   await expect(page.getByRole("combobox", { name: "Campaign status" })).toHaveValue("pending_approval");
   await page.locator(`a[href="/campaigns/${campaignId}"]`).click();
-  await page
-    .getByRole("button", { name: "Approve campaign", exact: true })
-    .click();
+  await expect(page.getByText("Awaiting approval", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve campaign", exact: true })).toHaveCount(0);
+  const denied = await page.request.post(`/api/campaigns/${campaignId}/approve`, { headers: mutationHeaders });
+  expect(denied.status()).toBe(403);
+  const chairPage = await browser.newPage({ baseURL });
+  try {
+    await writeJson(chairPage.request, "/auth/login", { email: "chair@example.com", password: process.env.SEED_PASSWORD });
+    chairPage.on("dialog", dialog => dialog.accept());
+    await chairPage.goto(`/campaigns/${campaignId}`);
+    await chairPage.getByRole("button", { name: "Approve campaign", exact: true }).click();
+    await expect(chairPage.getByRole("button", { name: "Queue sandbox delivery" })).toBeVisible();
+  } finally {
+    await chairPage.close();
+  }
   await page.getByRole("button", { name: "Queue sandbox delivery" }).click();
   await expect
     .poll(async () => {
@@ -321,7 +335,7 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await page.setViewportSize({ width: 390, height: 844 });
   const mobileNavigation = page.getByRole("button", { name: "Toggle navigation" });
   await mobileNavigation.click();
-  const drawer = page.getByRole("dialog", { name: "MIST Deck" });
+  const drawer = page.getByRole("dialog", { name: "MIST Atlas" });
   await expect(drawer).toBeVisible();
   await expect.poll(() => drawer.locator(".brand-symbol").evaluate((logo: HTMLImageElement) => logo.naturalWidth)).toBeGreaterThan(0);
   await page.screenshot({ path: "test-results/mobile-navigation.png" });
@@ -335,6 +349,10 @@ test("organizer imports, reviews, campaigns, and resolves a support ticket", asy
   await expect.poll(() => page.locator(".login-card .brand-symbol").evaluate((logo: HTMLImageElement) => logo.naturalWidth)).toBeGreaterThan(0);
   await login("tech@example.com");
   await expect(page.getByRole("navigation").getByRole("link", { name: "Competitions", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("navigation").getByRole("link", { name: "Email Outreach", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Create campaign" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "New simulated ticket" })).toHaveCount(0);
+  await page.goto("/campaigns?view=conversations");
+  await expect(page.getByRole("heading", { name: "Access restricted" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Simulate incoming email" })).toHaveCount(0);
 });

@@ -33,9 +33,10 @@ test("shared heads receive judge alerts and chair clears judges only after backu
   await page.getByRole("button", { name: "Email selected (2)" }).click();
   await expect(page.getByRole("button", { name: "Remove Inbox First Judge", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Remove Inbox Second Judge", exact: true }).click();
-  await page.getByLabel("Find or add a recipient").fill("Inbox Second");
+  await page.getByLabel("Search judges", { exact: true }).fill("Inbox Second");
   await page.locator(".recipient-options").getByRole("button", { name: /Inbox Second Judge/ }).click();
-  await page.getByLabel("Find or add a recipient").fill("registration-extra@example.org");
+  await page.getByRole("button", { name: "One-off email" }).click();
+  await page.getByLabel("Recipient email", { exact: true }).fill("registration-extra@example.org");
   await page.getByLabel("Recipient name (optional)").fill("Registration Team");
   await expect(page.getByLabel("Save this person as a contact")).not.toBeChecked();
   await page.getByRole("button", { name: "Add registration-extra@example.org", exact: true }).click();
@@ -43,24 +44,31 @@ test("shared heads receive judge alerts and chair clears judges only after backu
   await page.getByLabel("Campaign name", { exact: true }).fill("Inbox workflow campaign");
   await page.getByLabel("Subject", { exact: true }).fill("Invitation to judge");
   await page.getByLabel("Email body").fill("Hello {{first_name}}, please join us as a judge.");
-  await page.getByRole("button", { name: "Create draft & preview" }).click();
+  await page.getByRole("button", { name: "Save draft & review" }).click();
   await expect(page.getByRole("heading", { name: "Inbox workflow campaign" })).toBeVisible();
   await page.getByRole("button", { name: "Submit for approval" }).click();
-  await page.getByRole("button", { name: "Approve campaign", exact: true }).click();
-  await page.getByRole("button", { name: "Queue sandbox delivery" }).click();
+  await expect(page.getByText("Awaiting approval", { exact: true }).first()).toBeVisible();
   const campaignId = page.url().split("/campaigns/")[1];
+  const chair = await playwright.request.newContext({ baseURL });
+  try {
+    await writeJson(chair, "/auth/login", { email: "chair@example.com", password });
+    await writeJson(chair, `/campaigns/${campaignId}/approve`);
+  } finally {
+    await chair.dispose();
+  }
+  await page.getByRole("button", { name: "Queue sandbox delivery" }).click();
   await expect.poll(async () => (await (await page.request.get(`/api/campaigns/${campaignId}`)).json()).status).toBe("completed");
   await page.goto("/campaigns");
   await page.getByLabel("Search outreach campaigns").fill("registration-extra@example.org");
   await expect(page.getByRole("row").filter({ hasText: "Inbox workflow campaign" })).toBeVisible();
-  await page.getByLabel("Search outreach campaigns").fill("");
+  await page.getByRole("link", { name: "Judge Conversations", exact: true }).click();
   await page.getByRole("button", { name: "Simulate incoming email" }).click();
   await page.getByLabel("Sender name", { exact: true }).fill("Inbox First Judge");
   await page.getByLabel("Sender email", { exact: true }).fill("inbox-first@example.org");
   await page.getByLabel("Subject", { exact: true }).fill("Yes, I can judge");
   await page.getByLabel("Message", { exact: true }).fill("Thanks for inviting me.");
   await page.getByRole("button", { name: "Receive sandbox email" }).click();
-  await expect(page.locator(".conversation-row.unread")).toContainText("Inbox First Judge");
+  await expect(page.getByRole("row", { name: /Inbox First Judge/ })).toContainText(/1 unread/);
   await page.goto("/competitions");
   await expect(page.locator(".pilot-card").filter({ hasText: "Brackets" }).getByLabel("1 unread reply", { exact: true })).toBeVisible();
   await page.locator(".pilot-card").filter({ hasText: "Brackets" }).click();
@@ -73,7 +81,7 @@ test("shared heads receive judge alerts and chair clears judges only after backu
   await expect(page.getByText("Thanks for inviting me.")).toBeVisible();
   await page.goto("/competitions");
   await expect(page.locator(".pilot-card").filter({ hasText: "Brackets" }).locator(".unread-marker")).toHaveCount(0);
-  await page.goto("/campaigns");
+  await page.goto("/campaigns?view=conversations");
   await page.getByRole("button", { name: "Simulate incoming email" }).click();
   await page.getByLabel("Sender name", { exact: true }).fill("A New Sender");
   await page.getByLabel("Sender email", { exact: true }).fill("new-ticket@example.org");

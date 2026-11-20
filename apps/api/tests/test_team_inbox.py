@@ -10,6 +10,7 @@ from mist.db import SessionLocal, now
 from mist.main import app
 from mist.models import Judge, Recipient, Outbound, Notification, DirectoryBackup, Audit
 from mist.worker import run_once
+from test_workflows import queue
 
 
 def ok(response):
@@ -26,8 +27,7 @@ def campaign(client, **extra):
 
 
 def send(client, item):
-    for action in ("submit", "approve", "queue"):
-        ok(client.post(f"/api/campaigns/{item['id']}/{action}"))
+    queue(client, item)
     while run_once("team-test"):
         pass
 
@@ -159,8 +159,7 @@ def test_ticket_creation_replay_keeps_one_ticket_message_alert_and_audit_event(d
 
 def test_failed_recipient_notification_identifies_exact_email(director):
     item = campaign(director, recipients=[{"name": "Success", "email": "success@example.com"}, {"name": "Failed Person", "email": "fails@example.com"}])
-    for action in ("submit", "approve", "queue"):
-        ok(director.post(f"/api/campaigns/{item['id']}/{action}"))
+    queue(director, item)
     with SessionLocal() as db:
         message = db.scalar(select(Outbound).where(Outbound.recipient_email == "fails@example.com"))
         message.simulate_failure = True

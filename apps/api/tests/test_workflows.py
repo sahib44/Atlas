@@ -4,9 +4,12 @@ from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4, UUID
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import select, func
 from mist.db import SessionLocal, now
+from mist.main import app
 from mist.models import *
+from mist.seed import account_password
 from mist.services import (
     contact_identity,
     email,
@@ -46,8 +49,15 @@ def make_campaign(client, ids=None):
 
 
 def queue(client, c):
-    for action in ["submit", "approve", "queue"]:
-        ok(client.post(f'/api/campaigns/{c["id"]}/{action}'))
+    url = f'/api/campaigns/{c["id"]}'
+    ok(client.post(f"{url}/submit"))
+    with TestClient(app, headers={"X-MIST-Request": "1"}) as chair:
+        ok(chair.post("/api/auth/login", json={
+            "email": "chair@example.com",
+            "password": account_password("competitions_chair"),
+        }))
+        ok(chair.post(f"{url}/approve"))
+    ok(client.post(f"{url}/queue"))
 
 
 def test_normalization_and_sandbox():
@@ -372,7 +382,7 @@ def test_shared_ticket_notes_reply_privacy_and_lifecycle(director):
     )
 
 
-def test_competitions_ticket_scope_and_approval_grant(client):
+def test_competitions_ticket_scope(client):
     login(client, "director")
     ticket = ok(
         client.post(
@@ -396,10 +406,39 @@ def test_competitions_ticket_scope_and_approval_grant(client):
     login(client, "competitions")
     assert client.get("/api/tickets/" + ticket["id"]).status_code == 200
     assert ok(client.get("/api/tickets"))["total"] == 1
-    c = make_campaign(client)
-    ok(client.post(f'/api/campaigns/{c["id"]}/submit'))
-    assert client.post(f'/api/campaigns/{c["id"]}/approve').status_code == 200
     assert client.get("/api/audit-events").status_code == 403
+
+
+def test_only_competitions_chair_can_approve_campaign(client):
+    login(client, "competitions")
+    member = ok(client.get("/api/auth/me"))
+    with SessionLocal.begin() as db:
+        db.get(User, UUID(member["id"])).permissions = []
+    url = f'/api/campaigns/{make_campaign(client)["id"]}'
+    assert ok(client.post(f"{url}/submit"))["status"] == "pending_approval"
+    assert client.post(f"{url}/approve").status_code == 403
+
+    with SessionLocal.begin() as db:
+        db.get(User, UUID(member["id"])).permissions = ["campaign_approver"]
+    assert client.post(f"{url}/approve").status_code == 403
+    assert client.post(f"{url}/queue").status_code == 400
+    pending = ok(client.get(url))
+    assert pending["status"] == "pending_approval"
+    assert pending["approved_by"] is None
+
+    with TestClient(app, headers={"X-MIST-Request": "1"}) as reviewer:
+        login(reviewer, "director")
+        assert reviewer.post(f"{url}/approve").status_code == 403
+        chair = ok(reviewer.post("/api/auth/login", json={
+            "email": "chair@example.com",
+            "password": account_password("competitions_chair"),
+        }))
+        approval = ok(reviewer.post(f"{url}/approve"))
+        assert approval["status"] == "approved"
+        assert approval["approved_by"] == chair["id"]
+
+    assert ok(client.post(f"{url}/queue"))["status"] == "queued"
+    assert ok(client.post(f"{url}/cancel"))["status"] == "cancelled"
 
 
 def test_saved_lists_are_removed(director):

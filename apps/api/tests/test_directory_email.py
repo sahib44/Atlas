@@ -103,8 +103,7 @@ def test_campaign_attachment_and_sandbox_forward(director):
     attachment = ok(director.post(url, files={"file": ("rules.pdf", b"%PDF-1.4\n%mock", "application/pdf")}))
     assert [a["filename"] for a in ok(director.get(f"/api/campaigns/{campaign['id']}"))["attachments"]] == ["rules.pdf"]
     assert director.get(f"{url}/{attachment['id']}").content.startswith(b"%PDF-")
-    for transition in ("submit", "approve", "queue"):
-        ok(director.post(f"/api/campaigns/{campaign['id']}/{transition}"))
+    queue(director, campaign)
     assert director.post(url, files={"file": ("later.txt", b"too late", "text/plain")}).status_code == 400
     run_once("attachment-test")
     original = ok(director.get(f"/api/outbox?campaign_id={campaign['id']}"))["items"][0]

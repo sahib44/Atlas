@@ -140,7 +140,7 @@ const grants: Record<string, string[]> = {
     "judges",
     "imports",
     "campaigns",
-    "approve",
+    "campaign_cancel",
     "tickets",
     "catalogs",
     "audit",
@@ -149,25 +149,15 @@ const grants: Record<string, string[]> = {
     "jobs",
   ],
   technology_administrator: ["imports", "catalogs", "audit", "outbox", "jobs"],
-  competitions_administrator: [
-    "judges",
-    "imports",
-    "campaigns",
-    "tickets",
-    "catalogs",
-    "outbox",
-  ],
 };
 for (const role of ["competitions_administrator", "competitions_member", "competitions_chair"]) {
-  grants[role] = ["judges", "imports", "campaigns", "approve", "tickets", "catalogs", "outbox"];
+  grants[role] = ["judges", "imports", "campaigns", "campaign_cancel", "tickets", "catalogs", "outbox"];
 }
-grants.competitions_chair.push("delete", "ticket_approve", "judge_assign", "recruitment_review");
+grants.competitions_chair.push("approve", "delete", "ticket_approve", "judge_assign", "recruitment_review");
 export function can(user: User | undefined, permission: string) {
   return (
     !!user &&
     (grants[user.role]?.includes(permission) ||
-      (permission === "approve" &&
-        user.permissions.includes("campaign_approver")) ||
       (permission === "tickets" &&
         user.permissions.includes("private_tickets")))
   );

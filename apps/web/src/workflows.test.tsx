@@ -112,16 +112,12 @@ describe("permissions and request feedback", () => {
     expect(can(user, "imports")).toBe(false);
     expect(can(user, "approve")).toBe(false);
     expect(can(user, "tickets")).toBe(false);
-    expect(
-      can(
-        {
-          ...user,
-          role: "competitions_administrator",
-          permissions: ["campaign_approver"],
-        },
-        "approve",
-      ),
-    ).toBe(true);
+  });
+  it("grants campaign approval only to the chair despite legacy grants", () => {
+    for (const role of ["competitions_member", "competitions_administrator", "director", "technology_administrator", "competitions_chair"]) {
+      const user = { role, permissions: ["campaign_approver"] } as User;
+      expect(can(user, "approve")).toBe(role === "competitions_chair");
+    }
   });
   it("announces loading and persistent errors", () => {
     render(
@@ -140,7 +136,7 @@ describe("team permissions and recipients", () => {
   it("grants everyday tools to heads and deletion only to the chair or director", () => {
     const member = { role: "competitions_member", permissions: [] } as unknown as User;
     expect(can(member, "campaigns")).toBe(true);
-    expect(can(member, "approve")).toBe(true);
+    expect(can(member, "campaign_cancel")).toBe(true);
     expect(can(member, "delete")).toBe(false);
     expect(can({ ...member, role: "competitions_chair" }, "delete")).toBe(true);
     expect(can({ ...member, role: "director" }, "delete")).toBe(true);

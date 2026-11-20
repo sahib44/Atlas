@@ -94,9 +94,11 @@ created by themselves. Technology administrators do not receive ticket access by
 role: a director must grant `private_tickets` separately. This restriction covers
 ticket-linked outbox records, dashboard data and ticket audit snapshots.
 
-Directors manage roles. The optional `campaign_approver` grant permits competition
-campaign approval. Seeded competitions users have the grant so the supplied E2E
-journey can be completed. A director cannot disable/demote their own account.
+Directors manage roles and cannot disable or demote their own account.
+Campaign approval is reserved for the Competitions Chair. The old
+`campaign_approver` value can be stored on legacy accounts and has no effect on
+authorization. Campaign access permits submission, cancellation, and queueing
+after approval.
 
 ### Operational details
 

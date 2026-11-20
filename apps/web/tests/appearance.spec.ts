@@ -6,6 +6,7 @@ test("appearance migrates, persists, and applies readable palettes to the worksp
   if (!password) throw new Error("SEED_PASSWORD is required");
   await page.addInitScript(() => localStorage.setItem("mist-theme", "dark"));
   await page.goto("/login");
+  await expect(page).toHaveTitle(/MIST Atlas/);
   const root = page.locator("html");
   const appearance = page.getByRole("button", { name: "Appearance", exact: true });
   const options = page.getByRole("group", { name: "Theme", exact: true });
@@ -29,6 +30,10 @@ test("appearance migrates, persists, and applies readable palettes to the worksp
     await expect(root).toHaveAttribute("data-theme", value);
     await expect(root).toHaveCSS("background-color", canvas);
     await expect(page.locator(".login-card")).toHaveCSS("background-color", surface);
+    const logo = page.locator(".login-identity img");
+    const logoVariant = value === "light" ? "light" : "dark";
+    await expect(logo).toHaveAttribute("src", `/brand/atlas-stacked-compact-${logoVariant}.svg`);
+    await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
     await expectReadable(page.getByText("Password", { exact: true }));
     await expectReadable(page.getByRole("button", { name: "Sign in" }));
   }
@@ -43,7 +48,7 @@ test("appearance migrates, persists, and applies readable palettes to the worksp
     ["/competitions", "Competitions", ".pilot-card"],
     ["/recruitment", "Judge Recruitment", ".judge-metric"],
     ["/judges", "Judge Directory", ".judge-metric"],
-    ["/campaigns", "Outreach campaigns", 'input[aria-label="Search outreach campaigns"]'],
+    ["/campaigns", "Email Outreach", 'input[aria-label="Search outreach campaigns"]'],
     ["/tickets", "Tickets", ".ticket-pane"],
     ["/imports", "Imports", "header.topbar"],
     ["/duplicates", "Duplicate review", "header.topbar"],
@@ -56,14 +61,19 @@ test("appearance migrates, persists, and applies readable palettes to the worksp
     const heading = page.getByRole("heading", { name: title, exact: true });
     await expect(heading).toBeVisible();
     await expect(page.locator(surface).first()).toBeVisible();
+    const content = page.getByRole("main");
+    const backdrop = content.locator(".constellation-backdrop");
+    await expect(backdrop).toHaveAttribute("aria-hidden", "true");
+    await expect(backdrop).toHaveCSS("pointer-events", "none");
     for (const { label, value, sidebar } of themes) {
       await selectAppearance(page, label);
       await expect(root).toHaveAttribute("data-theme", value);
       await expect(page.locator(".sidebar")).toHaveCSS("background-color", sidebar);
+      await expect(content).toHaveCSS("background-image", /^radial-gradient/);
       await expectReadable(heading);
       await expectReadable(page.getByRole("link", { name: "Overview", exact: true }));
       if (path === "/tickets") await expectReadable(page.getByRole("searchbox", { name: "Search tickets" }), true);
-      if (path === "/campaigns") await expectReadable(page.getByRole("textbox", { name: "Search outreach campaigns" }), true);
+      if (path === "/campaigns") await expectReadable(page.getByRole("searchbox", { name: "Search outreach campaigns" }), true);
     }
   }
 

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="14 60 132 78">
+  <title>MIST Atlas</title>
+  <defs><linearGradient id="ridge" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#c477fb"/><stop offset=".55" stop-color="#8134ca"/><stop offset="1" stop-color="#531caa"/>
+    </linearGradient>
+    <linearGradient id="face" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#6224ae"/><stop offset="1" stop-color="#d498ff"/>
+    </linearGradient></defs>
+<path d="M25 128 53 74 80 104 107 74 135 128 103 101 85 122Q80 127 75 122L57 101Z" fill="url(#face)"/>
+    <path d="M25 128 53 74 80 104 107 74 135 128" fill="none" stroke="url(#ridge)" stroke-width="9" stroke-linejoin="round"/>
+    <path d="M25 128 57 101 80 104 103 101 135 128M53 74 57 101M107 74 103 101" fill="none" stroke="#edc1ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#fff8ff" stroke="#54109c" stroke-width="4"><circle cx="25" cy="128" r="6"/><circle cx="53" cy="74" r="6"/><circle cx="57" cy="101" r="5"/><circle cx="80" cy="104" r="5"/><circle cx="103" cy="101" r="5"/><circle cx="107" cy="74" r="6"/><circle cx="135" cy="128" r="6"/></g>
+</svg>

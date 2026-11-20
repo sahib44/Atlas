@@ -164,14 +164,18 @@ export function ConfirmButton({
   onConfirm,
   question,
   disabled = false,
+  className,
 }: {
   children: ReactNode;
+  className?: string;
   onConfirm: () => void;
   question: string;
   disabled?: boolean;
 }) {
   return (
     <button
+      type="button"
+      className={className}
       disabled={disabled}
       onClick={() => {
         if (window.confirm(question)) onConfirm();

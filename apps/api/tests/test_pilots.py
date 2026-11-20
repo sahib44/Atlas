@@ -4,6 +4,7 @@ from mist.db import SessionLocal, now
 from mist.models import Audit, PilotNomination
 from mist.worker import run_once
 from test_recruitment import review
+from test_workflows import queue
 
 
 def ok(response):
@@ -76,8 +77,7 @@ def test_pilot_folder_judges_documents_filters_and_individual_mock_messages(dire
     previews = ok(director.get(f"/api/campaigns/{campaign['id']}/preview"))["items"]
     assert len({item["recipient_email"] for item in previews}) == 2
     assert all("MIST-hack" in item["rendered_body"] for item in previews)
-    for transition in ("submit", "approve", "queue"):
-        ok(director.post(f"/api/campaigns/{campaign['id']}/{transition}"))
+    queue(director, campaign)
     run_once("pilot-test")
     run_once("pilot-test")
     outbox = ok(director.get(f"/api/outbox?campaign_id={campaign['id']}"))
@@ -108,15 +108,14 @@ def test_sandbox_pilot_message_advances_to_contact_and_resets_follow_up_clock(di
     }))
     review(director, nomination)
     judge_id = ok(director.get(f"/api/competitions/{pilot_id}/judges"))["items"][0]["judge"]["id"]
-    campaign_id = ok(director.post("/api/campaigns", json={
+    campaign = ok(director.post("/api/campaigns", json={
         "name": "Pilot invitation",
         "subject_template": "Invitation",
         "body_template": "Hello {{judge_name}}",
         "judge_ids": [judge_id],
         "pilot_competition_id": pilot_id,
-    }))["id"]
-    for transition in ("submit", "approve", "queue"):
-        ok(director.post(f"/api/campaigns/{campaign_id}/{transition}"))
+    }))
+    queue(director, campaign)
     assert ok(director.get(f"/api/competitions/{pilot_id}/judges"))["items"][0]["status"] == "to_contact"
     run_once("pilot-auto-status")
     after = ok(director.get(f"/api/competitions/{pilot_id}/judges"))["items"][0]
@@ -124,7 +123,7 @@ def test_sandbox_pilot_message_advances_to_contact_and_resets_follow_up_clock(di
     assert after["status"] == "awaiting_response"
     assert after["last_contacted_at"]
     assert ok(director.get(f"/api/competitions/{pilot_id}/judges?overdue_days=7"))["total"] == 0
-    assert ok(director.get(f"/api/outbox?campaign_id={campaign_id}"))["items"][0]["provider"] == "mock"
+    assert ok(director.get(f"/api/outbox?campaign_id={campaign['id']}"))["items"][0]["provider"] == "mock"
 
 
 def test_competition_categories_and_pilot_only_deletion(director):

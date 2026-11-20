@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 206">
+  <title>MIST Atlas</title>
+  <defs><linearGradient id="ridge" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#c477fb"/><stop offset=".55" stop-color="#8134ca"/><stop offset="1" stop-color="#531caa"/>
+    </linearGradient>
+    <linearGradient id="face" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#6224ae"/><stop offset="1" stop-color="#d498ff"/>
+    </linearGradient></defs>
+  <g transform="translate(12 -15) scale(1.1)"><g fill="#7024b3" stroke="#7024b3">
+    <path d="M35 60A63 63 0 0 1 72 41M88 41A63 63 0 0 1 125 60M28 68A63 63 0 0 0 19 86M132 68A63 63 0 0 1 141 86M17 100A63 63 0 0 0 19 110M143 100A63 63 0 0 1 141 110" fill="none" stroke-width="2.3"/>
+    <path d="m80 22 3 18 12 4-12 3-3 19-3-19-12-3 12-4Z M4 92l14-2v5Z M156 92l-14-2v5Z M28 61l7 5-2 2Z M132 61l-7 5 2 2Z" stroke="none"/>
+  </g><path d="M25 128 53 74 80 104 107 74 135 128 103 101 85 122Q80 127 75 122L57 101Z" fill="url(#face)"/>
+    <path d="M25 128 53 74 80 104 107 74 135 128" fill="none" stroke="url(#ridge)" stroke-width="9" stroke-linejoin="round"/>
+    <path d="M25 128 57 101 80 104 103 101 135 128M53 74 57 101M107 74 103 101" fill="none" stroke="#edc1ff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#fff8ff" stroke="#54109c" stroke-width="4"><circle cx="25" cy="128" r="6"/><circle cx="53" cy="74" r="6"/><circle cx="57" cy="101" r="5"/><circle cx="80" cy="104" r="5"/><circle cx="103" cy="101" r="5"/><circle cx="107" cy="74" r="6"/><circle cx="135" cy="128" r="6"/></g></g>
+  <g text-anchor="middle" font-family="Inter, system-ui, sans-serif">
+    <text x="100" y="164" fill="#1a022e" font-size="47" font-weight="850" letter-spacing="2" textLength="166" lengthAdjust="spacingAndGlyphs">MIST</text>
+    <text x="100" y="197" fill="#7024b3" font-size="32" font-weight="740" letter-spacing="2" textLength="92" lengthAdjust="spacingAndGlyphs">Atlas</text>
+  </g>
+  <path d="M14 187l33-3v6Z M186 187l-33-3v6Z" fill="#7024b3"/>
+</svg>

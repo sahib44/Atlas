@@ -11,7 +11,7 @@ test("chair reviews a member's candidate from the overview before confirmation a
     await chairPage.goto("/login");
     const logo = chairPage.locator(".login-identity img");
     const logoPath = await logo.getAttribute("src");
-    expect(logoPath).toMatch(/mist-deck-mark(?:-[\w-]+)?\.svg/);
+    expect(logoPath).toBe("/brand/atlas-stacked-compact-light.svg");
     await expect.poll(() => logo.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
     await chairPage.getByLabel("Email", { exact: true }).fill("chair@example.com");
     await chairPage.getByLabel("Password", { exact: true }).fill(password);
@@ -190,7 +190,7 @@ test("chair reviews a member's candidate from the overview before confirmation a
     expect(layout.resultsLeft).toBeGreaterThanOrEqual(layout.sidebarRight);
     expect(layout.panelLeft).toBeGreaterThan(layout.resultsLeft);
     expect(layout.panelTop).toBeGreaterThanOrEqual(layout.toolbarBottom);
-    await expect(chairPage.locator(".sidebar .brand-symbol")).toHaveAttribute("src", logoPath!);
+    await expect(chairPage.locator(".sidebar .brand-symbol")).toHaveAttribute("src", "/brand/atlas-horizontal-compact-light.svg");
     await chairPage.getByRole("button", { name: "Sign out" }).click();
     await expect(chairPage).toHaveURL(/\/login$/);
     await expect(logo).toHaveAttribute("src", logoPath!);
