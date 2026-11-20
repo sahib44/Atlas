@@ -2,6 +2,7 @@ import csv
 import os
 from pathlib import Path
 from sqlalchemy import select, delete
+from .account_config import managed_mode
 from .db import SessionLocal
 from .models import User, Session, Committee, Category, Qualification, PilotCompetition
 from .competition_catalog import CATEGORIES
@@ -10,11 +11,12 @@ from .services import normalize_row, write_judge
 
 
 def seed(db):
+    if managed_mode():
+        return
     if db.scalar(select(User).limit(1)):
         seed_competition_accounts(db)
         seed_competitions(db)
         return
-    password = os.environ["SEED_PASSWORD"]
     for short, role, name in [
         ("director", "director", "Demo Director"),
         ("tech", "technology_administrator", "Demo Technology"),
@@ -55,7 +57,10 @@ def seed(db):
 
 def account_password(role):
     key = {"competitions_chair": "COMPETITIONS_CHAIR_PASSWORD", "competitions_member": "COMPETITIONS_MEMBER_PASSWORD"}.get(role, "SEED_PASSWORD")
-    return os.getenv(key) or os.environ["SEED_PASSWORD"]
+    password = os.getenv(key) or os.getenv("SEED_PASSWORD")
+    if not password:
+        raise RuntimeError("SEED_PASSWORD is required for the sandbox.")
+    return password
 
 
 def seed_competition_accounts(db, rotate_passwords=False):
@@ -77,10 +82,7 @@ def seed_competition_accounts(db, rotate_passwords=False):
     db.commit()
 
 
-def seed_competitions(db):
-    director = db.scalar(select(User).where(User.role == "director"))
-    if not director:
-        return
+def seed_permanent_competitions(db, actor):
     for slug, (_, names) in CATEGORIES.items():
         for name in names:
             if not db.scalar(select(PilotCompetition.id).where(
@@ -91,8 +93,15 @@ def seed_competitions(db):
             )):
                 db.add(PilotCompetition(
                     name=name, event_year=2027, category_slug=slug,
-                    is_pilot=False, created_by=director.id,
+                    is_pilot=False, created_by=actor.id,
                 ))
+
+
+def seed_competitions(db):
+    director = db.scalar(select(User).where(User.role == "director"))
+    if not director:
+        return
+    seed_permanent_competitions(db, director)
     if not db.scalar(select(PilotCompetition.id).where(
         PilotCompetition.category_slug == "arts",
         PilotCompetition.name == "Culinary Arts",

@@ -174,7 +174,7 @@ def audit(db, actor, action, obj, summary, before=None, after=None):
 
 
 def audit_scope(user):
-    statement = select(Audit)
+    statement = select(Audit).where(~Audit.action.startswith("account."))
     if allowed(user, "tickets") or "private_tickets" in user.permissions:
         return statement
     ticket_messages = select(cast(Outbound.id, String)).where(Outbound.related_ticket_id.is_not(None))

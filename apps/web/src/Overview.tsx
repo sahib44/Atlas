@@ -5,7 +5,7 @@ import {
   FolderKanban, Image, LifeBuoy, Mail, Palette, PenLine, Plus, ShieldCheck,
   Trophy, UserRoundPlus, Users, Utensils,
 } from "lucide-react";
-import { useData, Page, Row, can, label, date } from "./api";
+import { useData, Page, Row, can, label, date, type Department } from "./api";
 import { useUser } from "./App";
 import { UnreadMarker } from "./Inbox";
 import { Coverage, JudgeCoverage, tournamentPath, useTournament } from "./CompetitionCoverage";
@@ -39,6 +39,10 @@ type CompetitionPreview = Coverage & {
 type CampaignPreview = { id: string; name: string; status: string };
 type DeliverySummary = { recipient_count: number; counts: Record<string, number> };
 type PreviewPage<T> = { items: T[]; total: number };
+type DepartmentDashboard = {
+  items: CompetitionPreview[];
+  activity: Array<{ id: string; summary: string; created_at: string }>;
+};
 
 const actionLinks = [
   { link: "/campaigns?status=pending_approval", label: "Campaigns awaiting approval", icon: ShieldCheck },
@@ -86,6 +90,52 @@ function CampaignProgressItem({ campaign }: { campaign: CampaignPreview }) {
   </div>;
 }
 
+function CompetitionCards({ items }: { items: CompetitionPreview[] }) {
+  return <div className="overview-competition-grid">
+    {items.map(competition => {
+      const Icon = competitionIcons[competition.name] || categoryIcons[competition.category_slug] || FolderKanban;
+      return <Link className="overview-competition" key={competition.id} to={`/competitions/${competition.category_slug}/${competition.id}`}>
+        <Icon size={25} aria-hidden="true" />
+        <strong>{competition.name} <UnreadMarker count={competition.unread_count} /></strong>
+        <JudgeCoverage name={competition.name} confirmed_count={competition.confirmed_count} required_count={competition.required_count} />
+        <span className="overview-competition-year">{competition.is_pilot && "Pilot · "}{competition.event_year}</span>
+      </Link>;
+    })}
+  </div>;
+}
+
+function DepartmentOverview({ department, tournament }: { department: Department; tournament: ReturnType<typeof useTournament> }) {
+  const query = useData<DepartmentDashboard>(tournamentPath("/accounts/department-dashboard", tournament.year),
+    !tournament.isPending && !tournament.error);
+  const items = query.data?.items;
+  const openSlots = items?.reduce((total, item) => total + Math.max(0, item.required_count - item.confirmed_count), 0);
+  return <Panel className="department-overview" title={department.name}
+    action={<div className="actions">
+      <ViewAll to={tournamentPath(`/competitions/${department.category_slug}`, tournament.year)}>
+        {`Open ${department.name} competitions`}
+      </ViewAll>
+      <ViewAll to={tournamentPath("/competitions", tournament.year)}>Open all competitions</ViewAll>
+    </div>}>
+    <p className="department-summary">
+      Your primary department{openSlots !== undefined && <> · {openSlots} judge {openSlots === 1 ? "slot" : "slots"} open</>}
+    </p>
+    <ErrorBox error={tournament.error || query.error} />
+    {!tournament.error && (query.isPending ? <Loading /> : items && (items.length
+      ? <CompetitionCards items={items} />
+      : <Empty>No competitions for this department in the selected tournament.</Empty>))}
+    {query.data && <>
+      <h3>Department activity</h3>
+      {query.data.activity.length ? <ul className="department-activity">
+        {query.data.activity.map(event => <li key={event.id} className="overview-activity-row">
+          <Clock size={17} aria-hidden="true" />
+          <span>{event.summary}</span>
+          <time dateTime={event.created_at}>{date(event.created_at)}</time>
+        </li>)}
+      </ul> : <Empty>No recent department activity.</Empty>}
+    </>}
+  </Panel>;
+}
+
 export function Dashboard() {
   const query = useData<DashboardData>("/dashboard");
   const user = useUser();
@@ -125,6 +175,8 @@ export function Dashboard() {
       {showCampaigns && <Link className="button primary" to="/campaigns/new"><Plus size={16} /> Create campaign</Link>}
     </Heading>
     <ErrorBox error={query.error} />
+
+    {user?.managed_account && user.department && <DepartmentOverview department={user.department} tournament={tournament} />}
 
     {summaryCards.length > 0 && <section className="overview-metrics" aria-label="Workspace metrics">
       {summaryCards.map(({ link, label: title, icon: Icon, value }) => (
@@ -172,19 +224,9 @@ export function Dashboard() {
       </Panel>}
       {showCompetitions && <Panel className="overview-competitions" title="Competitions" action={<ViewAll to={competitionsHref} />}>
         <ErrorBox error={tournament.error || competitions.error} />
-        {!tournament.error && (competitions.isPending ? <Loading /> : competitions.data?.items.length ? (
-          <div className="overview-competition-grid">
-            {competitions.data.items.map(competition => {
-              const Icon = competitionIcons[competition.name] || categoryIcons[competition.category_slug] || FolderKanban;
-              return <Link className="overview-competition" key={competition.id} to={`/competitions/${competition.category_slug}/${competition.id}`}>
-                <Icon size={25} aria-hidden="true" />
-                <strong>{competition.name} <UnreadMarker count={competition.unread_count} /></strong>
-                <JudgeCoverage name={competition.name} confirmed_count={competition.confirmed_count} required_count={competition.required_count} />
-                <span className="overview-competition-year">{competition.is_pilot && "Pilot · "}{competition.event_year}</span>
-              </Link>;
-            })}
-          </div>
-        ) : competitions.data && <Empty>No competitions found.</Empty>)}
+        {!tournament.error && (competitions.isPending ? <Loading /> : competitions.data?.items.length
+          ? <CompetitionCards items={competitions.data.items} />
+          : competitions.data && <Empty>No competitions found.</Empty>)}
       </Panel>}
     </div>}
 

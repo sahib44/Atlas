@@ -6,10 +6,12 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select
+from .account_config import managed_mode
 from .db import get_db, now
-from .models import User, Session
+from .models import DepartmentAssignment, User, Session
 
 hasher = PasswordHasher()
+dummy_password_hash = hasher.hash(secrets.token_urlsafe(32))
 ROLE_PERMISSIONS = {
     "director": {
         "delete",
@@ -45,6 +47,16 @@ def fail(code, message, status=400):
     raise HTTPException(status, detail={"code": code, "message": message})
 
 
+def has_managed_assignment(db, user):
+    if user.role == "competitions_chair":
+        return True
+    return db.scalar(select(DepartmentAssignment.id).where(
+        DepartmentAssignment.user_id == user.id,
+        DepartmentAssignment.email == user.email,
+        DepartmentAssignment.ended_at.is_(None),
+    )) is not None
+
+
 def current_user(request: Request, db=Depends(get_db)):
     token = request.cookies.get("mist_session", "")
     session = db.scalar(
@@ -54,7 +66,11 @@ def current_user(request: Request, db=Depends(get_db)):
         )
     )
     user = db.get(User, session.user_id) if session else None
-    if not user or not user.is_active or user.role not in ROLE_PERMISSIONS:
+    if (
+        not user or not user.is_active or user.role not in ROLE_PERMISSIONS
+        or user.managed_account != managed_mode()
+        or (user.managed_account and not has_managed_assignment(db, user))
+    ):
         fail("unauthenticated", "Please sign in.", 401)
     if (
         request.method not in {"GET", "HEAD", "OPTIONS"}
@@ -74,19 +90,30 @@ def require(permission):
 
 
 def login(db, email, password, response):
-    user = db.scalar(
-        select(User).where(
-            User.email == email.strip().lower(), User.is_active.is_(True), User.role.in_(ROLE_PERMISSIONS)
-        )
+    managed = managed_mode()
+    eligible_user = select(User).where(
+        User.email == email.strip().lower(),
+        User.is_active.is_(True),
+        User.role.in_(ROLE_PERMISSIONS),
+        User.managed_account.is_(managed),
     )
+    user = db.scalar(eligible_user)
+    password_hash = user.password_hash if user else dummy_password_hash
     try:
-        hasher.verify(
-            user.password_hash if user else hasher.hash("unmatchable"), password
-        )
+        hasher.verify(password_hash, password)
     except VerificationError:
         fail("invalid_credentials", "Email or password is incorrect.", 401)
     if not user:
         fail("invalid_credentials", "Email or password is incorrect.", 401)
+    if managed:
+        from .accounts import lock_accounts
+
+        # A password change or revocation that commits during verification must
+        # not leave a new session behind.
+        lock_accounts(db)
+        user = db.scalar(eligible_user.execution_options(populate_existing=True))
+        if not user or user.password_hash != password_hash or not has_managed_assignment(db, user):
+            fail("invalid_credentials", "Email or password is incorrect.", 401)
     token = secrets.token_urlsafe(48)
     db.add(
         Session(
@@ -102,7 +129,7 @@ def login(db, email, password, response):
         token,
         httponly=True,
         samesite="strict",
-        secure=os.getenv("COOKIE_SECURE") == "true",
+        secure=managed or os.getenv("COOKIE_SECURE") == "true",
         max_age=43200,
     )
     return user

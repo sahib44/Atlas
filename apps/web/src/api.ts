@@ -20,6 +20,11 @@ export type Page = {
   page: number;
   page_size: number;
 };
+export type Department = {
+  slug: string;
+  name: string;
+  category_slug: string;
+};
 export type User = {
   id: string;
   full_name: string;
@@ -27,6 +32,8 @@ export type User = {
   role: string;
   permissions: string[];
   is_active: boolean;
+  managed_account?: boolean;
+  department?: Department | null;
 };
 export async function api<T = any>(
   path: string,
@@ -95,7 +102,7 @@ export function useData<T = any>(path: string, enabled = true) {
     enabled,
     retry: false,
     refetchInterval:
-      ["/audit-events", "/recruitment", "/outbox", "/campaigns", "/notifications", "/conversations", "/competitions", "/judge-directory", "/dashboard", "/tickets", "/imports", "/duplicates", "/judges", "/recipient-search"].some(prefix => path.startsWith(prefix))
+      ["/accounts", "/audit-events", "/recruitment", "/outbox", "/campaigns", "/notifications", "/conversations", "/competitions", "/judge-directory", "/dashboard", "/tickets", "/imports", "/duplicates", "/judges", "/recipient-search"].some(prefix => path.startsWith(prefix))
         ? 3000
         : false,
   });
@@ -155,6 +162,9 @@ for (const role of ["competitions_administrator", "competitions_member", "compet
 }
 grants.competitions_chair.push("approve", "delete", "ticket_approve", "judge_assign", "recruitment_review");
 export function can(user: User | undefined, permission: string) {
+  if (permission === "manage_accounts") {
+    return user?.managed_account === true && user.role === "competitions_chair";
+  }
   return (
     !!user &&
     (grants[user.role]?.includes(permission) ||
@@ -166,6 +176,11 @@ export const label = (s: unknown) =>
   String(s === "waiting_on_organizer" ? "Awaiting organizer" : s ?? "")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+export function accountRoleLabel(user: User) {
+  if (can(user, "manage_accounts")) return "Competitions Lead";
+  if (user.managed_account && user.department) return `${user.department.name} Head`;
+  return label(user.role);
+}
 export const date = (s: string | undefined) =>
   s ? new Date(s).toLocaleString() : "—";
 

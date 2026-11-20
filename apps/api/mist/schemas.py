@@ -13,6 +13,12 @@ class Login(Input):
     password: str = Field(max_length=200)
 
 
+class UserDepartmentView(BaseModel):
+    slug: str
+    name: str
+    category_slug: str
+
+
 class UserView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
@@ -21,6 +27,8 @@ class UserView(BaseModel):
     role: str
     permissions: list[str]
     is_active: bool
+    managed_account: bool = False
+    department: UserDepartmentView | None = None
 
 
 class ProfileUpdate(Input):

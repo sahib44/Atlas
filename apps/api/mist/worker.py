@@ -9,6 +9,7 @@ from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Protocol
 from sqlalchemy import select, or_, and_
+from .account_config import managed_mode, managed_origin, signing_key
 from .db import SessionLocal, now
 from .models import Outbound, Recipient, Campaign, Judge, PilotCompetition, PilotNomination, Ticket, TicketMessage
 from .assignments import lock_assignments
@@ -18,11 +19,11 @@ log = logging.getLogger("mist.worker")
 
 
 class EmailProvider(Protocol):
-    def send(self, message: Outbound) -> str: ...
+    def send(self, message: Outbound, *, body_text: str | None = None) -> str: ...
 
 
 class MockEmailProvider:
-    def send(self, message):
+    def send(self, message, *, body_text=None):
         # A mock receipt only. This provider has no network transport.
         contact_email(message.recipient_email)
         if message.simulate_failure:
@@ -71,9 +72,43 @@ def claim(db, worker_id):
     return msg.id
 
 
+def deliver_account_email(db, id, worker_id):
+    from .accounts import account_mail_payload, lock_accounts
+
+    lock_accounts(db)
+    message = db.scalar(
+        select(Outbound).where(Outbound.id == id).with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if message.status != "sending" or message.claimed_by != worker_id:
+        db.rollback()
+        return
+    body = account_mail_payload(db, message) if managed_mode() else None
+    if body is None:
+        message.status = "cancelled"
+        message.last_error = "Account link is no longer deliverable"
+    else:
+        message.attempt_count += 1
+        try:
+            # Bearer links only enter the provider in memory and are never written to Outbox.
+            message.provider_message_id = MockEmailProvider().send(message, body_text=body)
+            message.status, message.completed_at, message.last_error = "sent", now(), ""
+        except Exception:
+            message.status = "failed" if message.attempt_count >= 3 else "queued"
+            message.available_at = now() + timedelta(seconds=2**message.attempt_count)
+            message.last_error = "Account email could not be delivered"
+    message.claimed_at, message.claimed_by = None, None
+    audit(db, None, "account.email_attempt", message, "Processed account email",
+          after={"status": message.status, "attempt_count": message.attempt_count})
+    db.commit()
+
+
 def deliver(db, id, worker_id):
     initial = db.get(Outbound, id)
     if not initial:
+        return
+    if initial.account_token_id:
+        deliver_account_email(db, id, worker_id)
         return
     campaign, rec = None, None
     if initial.related_campaign_recipient_id or initial.forwarded_from_id:
@@ -204,10 +239,16 @@ def run_once(worker_id="manual-worker"):
     from .ticket_flow import close_idle_tickets
     with SessionLocal() as db:
         closed = close_idle_tickets(db)
+        account_work = 0
+        if managed_mode():
+            from .accounts import expire_account_tokens, process_reset_requests
+
+            account_work = expire_account_tokens(db) + process_reset_requests(db)
+            db.commit()
     with SessionLocal() as db:
         id = claim(db, worker_id)
     if not id:
-        return bool(closed)
+        return bool(closed or account_work)
     with SessionLocal() as db:
         deliver(db, id, worker_id)
     return True
@@ -233,6 +274,9 @@ if __name__ == "__main__":
     import sys
 
     logging.basicConfig(level=logging.INFO)
+    if managed_mode():
+        managed_origin()
+        signing_key()
     if "--once" in sys.argv:
         while run_once():
             pass

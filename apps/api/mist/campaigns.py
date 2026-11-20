@@ -352,7 +352,7 @@ def transition(
 
 
 def outbox_scope(user):
-    stmt = select(Outbound)
+    stmt = select(Outbound).where(Outbound.account_token_id.is_(None))
     if (
         user.role == "technology_administrator"
         and "private_tickets" not in user.permissions

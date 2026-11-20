@@ -1,0 +1,111 @@
+.account-position-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
+  gap: 14px;
+}
+.panel.account-position {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+.panel.account-position > header {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.account-position h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.account-position h2 > svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+.account-state.invited {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  color: var(--warning-text);
+}
+.account-state.revoked {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+.account-position .account-position-details {
+  flex: 1;
+  margin: 0 0 15px;
+  font-size: 0.85rem;
+}
+.account-position .account-position-details > div {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(0, 1.45fr);
+  gap: 8px;
+  padding: 6px 0;
+}
+.account-position-details dt { color: var(--muted); }
+.account-position-details dd { margin: 0; overflow-wrap: anywhere; }
+.account-position-actions, .account-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.account-dialog .account-dialog-actions { justify-content: flex-end; }
+.account-position-actions button { white-space: normal; }
+.account-dialog .account-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+.account-dialog .account-danger:hover { border-color: var(--danger-text); }
+.account-history {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.account-history li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 5px 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.account-history li:last-child { border-bottom: 0; }
+.account-history li > div { min-width: 0; overflow-wrap: anywhere; }
+.account-history small, .account-history time {
+  display: block;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.account-notice {
+  padding: 11px 13px;
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius-control);
+  color: var(--success-text);
+}
+.account-access-link {
+  margin: 15px 0 0;
+  text-align: center;
+  font-size: 0.88rem;
+}
+.account-password-guidance {
+  margin: -7px 0 12px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.department-overview > header { flex-wrap: wrap; }
+.department-summary {
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.department-activity {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.department-activity > li:hover { background: transparent; }
+@media (max-width: 520px) {
+  .department-activity > li { grid-template-columns: 20px minmax(0, 1fr); }
+  .department-activity time { grid-column: 2; }
+}

@@ -1,14 +1,63 @@
 from datetime import timedelta
-from fastapi import APIRouter, Depends
-from sqlalchemy import select, func
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select, func, String, cast, and_, or_
 from .db import get_db, now
-from .models import Audit, Campaign, Duplicate, ImportBatch, Outbound, Ticket
-from .auth import current_user, allowed
+from .models import Audit, Campaign, Duplicate, ImportBatch, OfficialJudgeAssignment, Outbound, PilotCompetition, PilotNomination, Ticket
+from .auth import current_user, allowed, fail
 from .services import audit_scope, serialize
 from .tickets import ticket_scope
 from .campaigns import outbox_scope
 
 router = APIRouter()
+
+
+@router.get("/api/accounts/department-dashboard")
+def department_dashboard(
+    event_year: int | None = Query(None, ge=2000, le=2200),
+    user=Depends(current_user),
+    db=Depends(get_db),
+):
+    from .accounts import department_for
+    from .pilots import active_competitions, add_competition_summaries, tournament_options
+
+    department = department_for(db, user) if user.managed_account else None
+    if not department or not allowed(user, "judges"):
+        fail("forbidden", "Your account has no department dashboard.", 403)
+    year = event_year if event_year is not None else tournament_options(db)["default_year"]
+    scope = active_competitions().where(
+        PilotCompetition.category_slug == department["category_slug"],
+        PilotCompetition.event_year == year,
+    )
+    sports = {
+        "brothers-sports": ("Brother's Basketball", "Brother's Soccer"),
+        "sisters-sports": ("Sister's Basketball", "Sister's Soccer"),
+    }.get(department["slug"])
+    if sports:
+        scope = scope.where(PilotCompetition.name.in_(sports))
+    items = [serialize(row) for row in db.scalars(
+        scope.order_by(PilotCompetition.is_pilot, PilotCompetition.name, PilotCompetition.id).limit(100)
+    )]
+    add_competition_summaries(db, items)
+    ids = scope.with_only_columns(PilotCompetition.id)
+    activity_targets = (
+        (PilotCompetition, PilotCompetition.id),
+        (PilotNomination, PilotNomination.pilot_id),
+        (OfficialJudgeAssignment, OfficialJudgeAssignment.competition_id),
+        (Campaign, Campaign.pilot_competition_id),
+    )
+    events = db.execute(
+        select(Audit.id, Audit.summary, Audit.created_at)
+        .where(or_(*(and_(
+            Audit.entity_type == model.__tablename__,
+            Audit.entity_id.in_(select(cast(model.id, String)).where(competition_id.in_(ids))),
+        ) for model, competition_id in activity_targets)))
+        .order_by(Audit.created_at.desc(), Audit.id.desc())
+        .limit(8)
+    )
+    return {
+        "items": items,
+        "activity": [{"id": row.id, "summary": row.summary, "created_at": row.created_at} for row in events],
+    }
 
 
 @router.get("/api/dashboard")

@@ -10,11 +10,13 @@ services:
   api:
     ports: !override ["127.0.0.1:18000:8000"]
     environment:
+      MIST_ACCOUNT_MODE: sandbox
       COMPETITIONS_CHAIR_PASSWORD: ""
       COMPETITIONS_MEMBER_PASSWORD: ""
       DATABASE_URL: postgresql+psycopg://mist:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/mist_e2e
   worker:
     environment:
+      MIST_ACCOUNT_MODE: sandbox
       COMPETITIONS_CHAIR_PASSWORD: ""
       COMPETITIONS_MEMBER_PASSWORD: ""
       DATABASE_URL: postgresql+psycopg://mist:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/mist_e2e
@@ -24,6 +26,7 @@ services:
       dockerfile: apps/api/Dockerfile
     profiles: ["e2e"]
     environment:
+      MIST_ACCOUNT_MODE: sandbox
       COMPETITIONS_CHAIR_PASSWORD: ""
       COMPETITIONS_MEMBER_PASSWORD: ""
       DATABASE_URL: postgresql+psycopg://mist:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/mist_e2e

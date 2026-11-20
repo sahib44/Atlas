@@ -1,12 +1,14 @@
 import hashlib
 import logging
 import time
+from contextlib import asynccontextmanager
 from uuid import UUID
 from fastapi import FastAPI, Depends, Request, Response, Query
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import select, delete, text, func
 from sqlalchemy.exc import IntegrityError
+from .account_config import managed_mode, managed_origin, signing_key
 from .db import get_db, now
 from .models import *
 from .schemas import *
@@ -15,7 +17,15 @@ from .auth import current_user, require, allowed, login, fail
 from .assignments import lock_assignments, merge_assignment_contacts
 from .services import *
 
-app = FastAPI(title="MIST Deck", version="1.2.0")
+@asynccontextmanager
+async def lifespan(app):
+    if managed_mode():
+        managed_origin()
+        signing_key()
+    yield
+
+
+app = FastAPI(title="MIST Atlas", version="1.2.0", lifespan=lifespan)
 logger = logging.getLogger("mist")
 
 
@@ -72,12 +82,27 @@ def health(db=Depends(get_db)):
 
 @app.post("/api/auth/login", response_model=UserView)
 def sign_in(data: Login, response: Response, db=Depends(get_db)):
-    return login(db, data.email, data.password, response)
+    return session_profile(db, login(db, data.email, data.password, response))
+
+
+def session_profile(db, user):
+    from .accounts import department_for
+
+    view = UserView.model_validate(user)
+    department = department_for(db, user) if user.managed_account else None
+    if department:
+        view.department = UserDepartmentView.model_validate(department)
+    return view
+
+
+@app.get("/api/auth/account-mode")
+def account_mode():
+    return {"managed": managed_mode()}
 
 
 @app.get("/api/auth/me", response_model=UserView)
-def me(user=Depends(current_user)):
-    return user
+def me(user=Depends(current_user), db=Depends(get_db)):
+    return session_profile(db, user)
 
 
 @app.patch("/api/auth/me", response_model=UserView)
@@ -92,7 +117,7 @@ def update_profile(data: ProfileUpdate, user=Depends(current_user), db=Depends(g
         audit(db, user, "user.profile_updated", profile, "Updated profile display name",
               before, {"full_name": full_name})
     db.commit()
-    return profile
+    return session_profile(db, profile)
 
 
 @app.post("/api/auth/logout")
@@ -108,7 +133,7 @@ def logout(
         )
     )
     db.commit()
-    response.delete_cookie("mist_session")
+    response.delete_cookie("mist_session", secure=managed_mode(), httponly=True, samesite="strict")
     return {"ok": True}
 
 
@@ -127,7 +152,7 @@ def users(
         fail("forbidden", "Cannot view users.", 403)
     return page(
         db,
-        select(User).order_by(User.full_name),
+        select(User).where(User.managed_account.is_(managed_mode())).order_by(User.full_name),
         page_no,
         page_size,
         lambda u: UserView.model_validate(u).model_dump(mode="json"),
@@ -139,6 +164,8 @@ def update_user(
     id: UUID, data: UserUpdate, user=Depends(require("users")), db=Depends(get_db)
 ):
     target = get(db, User, id, True)
+    if target.managed_account:
+        fail("forbidden", "Managed accounts use department assignment actions.", 403)
     if target.id == user.id and (data.role != "director" or not data.is_active):
         fail("self_demotion", "You cannot disable or demote your own director account.")
     before = UserView.model_validate(target).model_dump(mode="json")
@@ -431,6 +458,7 @@ def audit_events(
     return page(db, stmt, page_no, page_size)
 
 
+from .accounts import router as accounts_router
 from .imports import router as imports_router
 from .campaigns import outbox_scope, router as campaigns_router
 from .tickets import router as tickets_router
@@ -440,6 +468,7 @@ from .directory import router as directory_router
 from .inbox import router as inbox_router
 from .recruitment import merge_recruitment_contacts, router as recruitment_router
 
+app.include_router(accounts_router)
 app.include_router(imports_router)
 app.include_router(campaigns_router)
 app.include_router(tickets_router)

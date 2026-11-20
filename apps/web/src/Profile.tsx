@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
-import { label, useAction, type User } from "./api";
+import { accountRoleLabel, useAction, type User } from "./api";
 import { ErrorBox, Field, Heading, Modal, Panel } from "./ui";
 
 export function Profile({ user }: { user: User }) {
@@ -39,7 +39,7 @@ export function Profile({ user }: { user: User }) {
     <Panel title="Account">
       <dl className="profile-account">
         <div><dt>Sign-in email</dt><dd>{user.email}</dd></div>
-        <div><dt>Role</dt><dd>{label(user.role)}</dd></div>
+        <div><dt>Role</dt><dd>{accountRoleLabel(user)}</dd></div>
       </dl>
       <form onSubmit={event => { event.preventDefault(); void save(); }}>
         <Field label="Display name">

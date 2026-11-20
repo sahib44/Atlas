@@ -77,6 +77,9 @@ SameSite=Strict cookie; only its SHA-256 digest is stored. Mutation requests req
 an application-specific header and the API exposes no permissive CORS policy.
 The former Settings catalog screen has been removed from the organizer interface.
 
+For invitation-only accounts and the Competitions Lead bootstrap, see the
+[managed account and private deployment guide](docs/managed-accounts.md).
+
 ## Configuration
 
 The local `.env` file is required and ignored by Git. Choose passwords without

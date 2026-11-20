@@ -42,6 +42,21 @@ class User(Record, Base):
     permissions: Mapped[list] = mapped_column(JSONB, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    managed_account: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    __table_args__ = (
+        CheckConstraint(
+            "NOT managed_account OR (email = lower(email) AND email ~ '^[^@[:space:]]+@getmistified[.]com$' "
+            "AND role IN ('competitions_chair', 'competitions_member'))",
+            name="ck_managed_account_identity",
+        ),
+        Index(
+            "uq_managed_competitions_lead",
+            "role",
+            unique=True,
+            postgresql_where=text("managed_account AND role = 'competitions_chair'"),
+        ),
+        UniqueConstraint("id", "email", name="uq_user_id_email"),
+    )
 
 
 class Session(Record, Base):
@@ -51,6 +66,81 @@ class Session(Record, Base):
         ForeignKey("users.id", ondelete="CASCADE")
     )
     expires_at: Mapped[object] = mapped_column(DateTime(timezone=True))
+
+
+class Department(Base):
+    __tablename__ = "departments"
+    slug: Mapped[str] = mapped_column(String(80), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    category_slug: Mapped[str] = mapped_column(String(80))
+    display_order: Mapped[int] = mapped_column(Integer)
+
+
+class DepartmentAssignment(Record, Base):
+    __tablename__ = "department_assignments"
+    department_slug: Mapped[str] = mapped_column(ForeignKey("departments.slug"), index=True)
+    email: Mapped[str] = mapped_column(String(254))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    ended_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    end_reason: Mapped[str | None] = mapped_column(String(40))
+    __table_args__ = (
+        ForeignKeyConstraint(["user_id", "email"], ["users.id", "users.email"], name="fk_department_assignment_identity"),
+        CheckConstraint(
+            "email = lower(email) AND email ~ '^[^@[:space:]]+@getmistified[.]com$'",
+            name="ck_department_assignment_email",
+        ),
+        CheckConstraint(
+            "(ended_at IS NULL AND end_reason IS NULL) OR "
+            "(ended_at IS NOT NULL AND end_reason IS NOT NULL AND end_reason IN ('revoked', 'reassigned'))",
+            name="ck_department_assignment_end",
+        ),
+        Index("uq_live_department_assignment", "department_slug", unique=True, postgresql_where=text("ended_at IS NULL")),
+        Index("uq_live_department_email", "email", unique=True, postgresql_where=text("ended_at IS NULL")),
+        Index("uq_live_department_user", "user_id", unique=True, postgresql_where=text("ended_at IS NULL")),
+    )
+
+
+class AccountToken(Record, Base):
+    __tablename__ = "account_tokens"
+    purpose: Mapped[str] = mapped_column(String(30))
+    email: Mapped[str] = mapped_column(String(254))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), index=True)
+    assignment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("department_assignments.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    expires_at: Mapped[object] = mapped_column(DateTime(timezone=True), index=True)
+    used_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    expired_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        CheckConstraint(
+            "(purpose = 'activate' AND assignment_id IS NOT NULL AND user_id IS NULL) OR "
+            "(purpose = 'reset' AND user_id IS NOT NULL)",
+            name="ck_account_token_scope",
+        ),
+        CheckConstraint(
+            "num_nonnulls(used_at, revoked_at, expired_at) <= 1",
+            name="ck_account_token_single_terminal_state",
+        ),
+        Index(
+            "uq_pending_invitation_token",
+            "assignment_id",
+            unique=True,
+            postgresql_where=text("purpose = 'activate' AND used_at IS NULL AND revoked_at IS NULL AND expired_at IS NULL"),
+        ),
+        Index(
+            "uq_pending_reset_token",
+            "user_id",
+            unique=True,
+            postgresql_where=text("purpose = 'reset' AND used_at IS NULL AND revoked_at IS NULL AND expired_at IS NULL"),
+        ),
+    )
+
+
+class AccountResetRequest(Base):
+    __tablename__ = "account_reset_requests"
+    id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(254))
+    created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=now, index=True)
 
 
 class Catalog(Record):
@@ -380,6 +470,7 @@ class Outbound(Record, Base):
     forwarded_from_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("outbound_messages.id"), index=True
     )
+    account_token_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("account_tokens.id", name="fk_outbound_account_token"))
     provider: Mapped[str] = mapped_column(String(30), default="mock")
     provider_message_id: Mapped[str | None] = mapped_column(String(100), unique=True)
     idempotency_key: Mapped[str] = mapped_column(String(200), unique=True)
@@ -391,7 +482,10 @@ class Outbound(Record, Base):
     claimed_by: Mapped[str | None] = mapped_column(String(100))
     completed_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     simulate_failure: Mapped[bool] = mapped_column(Boolean, default=False)
-    __table_args__ = (Index("ix_outbound_claim", "status", "available_at"),)
+    __table_args__ = (
+        Index("ix_outbound_claim", "status", "available_at"),
+        UniqueConstraint("account_token_id", name="uq_outbound_account_token"),
+    )
 
 
 class TicketMessage(Record, Base):

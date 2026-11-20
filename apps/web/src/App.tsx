@@ -27,16 +27,18 @@ import {
   Eye,
   EyeOff,
   LoaderCircle,
+  UserCog,
 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { SessionScope, useSession, useData, useAction, User, Page, can, label } from "./api";
+import { SessionScope, useSession, useData, useAction, User, Page, can, accountRoleLabel } from "./api";
 import { useQueryClient } from "@tanstack/react-query";
 import { ErrorBox, Loading, HistoryBack, Modal } from "./ui";
 import { Dashboard, AuditPage } from "./Overview";
 import { JudgeConversation, Notifications } from "./Inbox";
 import { Profile } from "./Profile";
+import { AccountAccessForm, accountAccessCopy, type AccountAccessKind, UserManagement } from "./Accounts";
 import "./judge-workspace.css";
 import { Imports, ImportWizard, Duplicates, DuplicateDetail } from "./Imports";
 import { Campaigns, CampaignNew, CampaignDetail, Outbox } from "./Campaigns";
@@ -171,6 +173,7 @@ function AccountFrame({ theme, onChangeTheme, title, description, children }: Ap
 function Login({ theme, onChangeTheme }: AppearanceProps) {
   const action = useAction();
   const navigate = useNavigate();
+  const mode = useData<{ managed: boolean }>("/auth/account-mode");
   const [passwordVisible, setPasswordVisible] = useState(false);
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -232,9 +235,16 @@ function Login({ theme, onChangeTheme }: AppearanceProps) {
             {action.isPending ? "Signing in…" : "Sign in"}
           </button>
         </form>
+        {mode.data?.managed && <p className="account-access-link"><Link to="/forgot-password">Forgot password?</Link></p>}
     </AccountFrame>
   );
 }
+
+const accountAccessRoutes: Record<string, AccountAccessKind> = {
+  "/activate": "activate",
+  "/forgot-password": "forgot",
+  "/reset-password": "reset",
+};
 
 const navGroups = [
   {
@@ -255,6 +265,7 @@ const navGroups = [
       ["/duplicates", "Duplicate review", Copy, "imports"],
       ["/outbox", "Sandbox outbox", Inbox, "outbox"],
       ["/audit", "Audit trail", History, "audit"],
+      ["/user-management", "User Management", UserCog, "manage_accounts"],
     ],
   },
 ] as const;
@@ -290,7 +301,7 @@ function WorkspaceAccount({ user, onSignOut, onOpenProfile }: { user: User; onSi
       }}
       aria-label="Open profile" aria-current={pathname === "/profile" ? "page" : undefined} title="Open profile">
       <span className="avatar" aria-hidden="true">{initials}</span>
-      <div className="workspace-copy"><strong>{user.full_name}</strong><small>{label(user.role)}</small></div>
+      <div className="workspace-copy"><strong>{user.full_name}</strong><small>{accountRoleLabel(user)}</small></div>
     </Link>
     <button type="button" className="account-sign-out" aria-label="Sign out" title="Sign out" onClick={onSignOut}>
       <LogOut size={17} aria-hidden="true" />
@@ -348,7 +359,7 @@ export default function App() {
   const auth = useSession();
   const cache = useQueryClient();
   const user = auth.data;
-  const scope = user ? JSON.stringify([user.id, user.role, [...user.permissions].sort()]) : "";
+  const scope = user ? JSON.stringify([user.id, user.role, [...user.permissions].sort(), user.managed_account, user.department?.slug]) : "";
   const previousScope = useRef("");
   useEffect(() => {
     const previous = previousScope.current;
@@ -364,6 +375,7 @@ export default function App() {
     () => window.localStorage.getItem("mist-sidebar-collapsed") === "true",
   );
   const { pathname } = useLocation();
+  const accountAccess = accountAccessRoutes[pathname.replace(/\/$/, "")];
   const judgeWorkspace = pathname === "/recruitment" || pathname === "/judges";
   const ticketWorkspace = /^\/tickets(?:\/(?!new$)[^/]+)?$/.test(pathname);
   const [theme, setTheme] = useState(loadTheme);
@@ -380,6 +392,12 @@ export default function App() {
     desktop.addEventListener("change", closeOnDesktop);
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, []);
+  if (accountAccess) {
+    const { title, description } = accountAccessCopy(accountAccess);
+    return <AccountFrame theme={theme} onChangeTheme={setTheme} title={title} description={description}>
+      <AccountAccessForm key={accountAccess} kind={accountAccess} />
+    </AccountFrame>;
+  }
   if (auth.isPending) return <Loading />;
   if (!user)
     return (
@@ -451,6 +469,7 @@ export default function App() {
               />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/profile" element={<Profile user={user} />} />
+              <Route path="/user-management" element={<Guard permission="manage_accounts"><UserManagement /></Guard>} />
               <Route path="/judges" element={<Suspense fallback={<Loading />}><JudgeDirectory /></Suspense>} />
               <Route path="/recruitment" element={<Guard permission="judges"><Suspense fallback={<Loading />}><JudgeRecruitment /></Suspense></Guard>} />
               <Route path="/contacts" element={<Navigate to="/judges" replace />} />
