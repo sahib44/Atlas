@@ -19,3 +19,6 @@ docs/build-specification.md
 
 # Private snapshots taken before an explicitly requested local reset
 /.local-backups/
+
+# Personal Atlas login reference
+/MIST_ATLAS_LOGINS.local.md

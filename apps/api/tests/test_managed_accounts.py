@@ -30,6 +30,7 @@ ACCOUNTS = "/api/accounts"
 POSITIONS = f"{ACCOUNTS}/positions"
 RESET_REQUEST = f"{ACCOUNTS}/password-reset/request"
 RESET_COMPLETE = f"{ACCOUNTS}/password-reset/complete"
+RECOVERY = f"{ACCOUNTS}/recovery"
 
 
 @pytest.fixture
@@ -37,6 +38,8 @@ def managed(monkeypatch):
     monkeypatch.setenv("MIST_ACCOUNT_MODE", "managed")
     monkeypatch.setenv("MIST_PUBLIC_ORIGIN", ORIGIN)
     monkeypatch.setenv("MIST_ACCOUNT_TOKEN_KEY", token_urlsafe(48))
+    monkeypatch.setenv("MIST_RECOVERY_KEY", token_urlsafe(48))
+    monkeypatch.setenv("MIST_COMPETITIONS_LEAD_EMAIL", LEAD_EMAIL)
     monkeypatch.setenv("COOKIE_SECURE", "true")
     with SessionLocal() as db:
         bootstrap_lead(db, LEAD_EMAIL, "Fixture Lead", PASSWORD)
@@ -52,6 +55,7 @@ def lead(managed):
         user = ok(sign_in(client, LEAD_EMAIL))
         assert user["role"] == "competitions_chair"
         assert user["department"] is None
+        enroll_recovery(client, LEAD_EMAIL)
         yield client
 
 
@@ -78,9 +82,12 @@ def position_action(client, slug, action, assignment_id, **fields):
 
 def last_challenge(email, purpose="activate"):
     with SessionLocal() as db:
-        challenge = db.scalar(select(AccountToken).where(
-            AccountToken.email == email, AccountToken.purpose == purpose,
-        ).order_by(AccountToken.created_at.desc()).limit(1))
+        query = select(AccountToken).where(AccountToken.purpose == purpose)
+        if purpose == "activate":
+            query = query.where(AccountToken.email == email)
+        else:
+            query = query.join(User, AccountToken.user_id == User.id).where(User.email == email)
+        challenge = db.scalar(query.order_by(AccountToken.created_at.desc()).limit(1))
         assert challenge is not None
         return challenge.id, raw_account_token(challenge)
 
@@ -94,11 +101,24 @@ def activate(client, token, **fields):
 def invite_and_activate(lead, client, slug="arts", email=HEAD_EMAIL):
     ok(send_invite(lead, slug, email))
     ok(activate(client, last_challenge(email)[1]))
-    return ok(sign_in(client, email))
+    ok(sign_in(client, email))
+    enroll_recovery(client, email)
+    return ok(client.get("/api/auth/me"))
+
+
+def backup_email(email):
+    return email.partition("@")[0] + "@example.org"
+
+
+def enroll_recovery(client, email, destination=None, password=PASSWORD):
+    ok(client.post(f"{RECOVERY}/methods", json={
+        "kind": "email", "destination": destination or backup_email(email), "password": password,
+    }))
+    ok(client.post(f"{RECOVERY}/verify", json={"token": last_challenge(email, "verify_recovery")[1]}))
 
 
 def test_only_bootstrapped_lead_can_manage_positions(lead, monkeypatch):
-    assert ok(lead.get("/api/auth/account-mode")) == {"managed": True}
+    assert ok(lead.get("/api/auth/account-mode")) == {"managed": True, "sms_available": False}
     positions = ok(lead.get(POSITIONS))["items"]
     assert {row["slug"] for row in positions} == {
         "arts", "knowledge-quran", "writing-oratory", "brackets", "group-projects",
@@ -109,7 +129,7 @@ def test_only_bootstrapped_lead_can_manage_positions(lead, monkeypatch):
         existing = db.scalar(select(func.count()).select_from(User).where(User.managed_account, User.role == "competitions_chair"))
         assert existing == 1
         with pytest.raises(HTTPException) as duplicate:
-            bootstrap_lead(db, REPLACEMENT_EMAIL, "Fixture Second Lead", PASSWORD)
+            bootstrap_lead(db, LEAD_EMAIL, "Fixture Second Lead", PASSWORD)
         assert duplicate.value.status_code == 409
 
     with account_client() as outsider:
@@ -282,7 +302,7 @@ def test_private_delivery_only_renders_the_current_invitation_in_memory(lead, mo
         return send(provider, message, body_text=body_text)
 
     monkeypatch.setattr(MockEmailProvider, "send", capture)
-    for _ in range(3):
+    for _ in range(5):
         if not run_once("test-private-account-mail"):
             break
     assert len(delivered) == 1
@@ -348,7 +368,9 @@ def test_reset_does_not_enumerate_accounts_and_revokes_existing_sessions(lead):
     with account_client() as account, account_client() as public:
         invite_and_activate(lead, account)
         def request(email):
-            return public.post(RESET_REQUEST, json={"email": email})
+            return public.post(RESET_REQUEST, json={
+                "email": email, "kind": "email", "destination": backup_email(HEAD_EMAIL),
+            })
         unknown = ok(request("fixture.unknown@getmistified.com"))
         assert ok(request("fixture.external@example.org")) == unknown
         assert ok(request(HEAD_EMAIL)) == unknown
@@ -358,7 +380,10 @@ def test_reset_does_not_enumerate_accounts_and_revokes_existing_sessions(lead):
         assert run_once("test-reset-request")
         with SessionLocal() as db:
             assert db.scalar(select(AccountResetRequest.id)) is None
-            assert set(db.scalars(select(AccountToken.email).where(AccountToken.purpose == "reset"))) == {HEAD_EMAIL}
+            token = db.scalar(select(AccountToken).where(AccountToken.purpose == "reset"))
+            assert db.get(User, token.user_id).email == HEAD_EMAIL
+            assert token.recovery_method_id is not None
+            assert token.email not in {HEAD_EMAIL, backup_email(HEAD_EMAIL)}
         token_id, token = last_challenge(HEAD_EMAIL, "reset")
         assert ok(request(HEAD_EMAIL.upper())) == unknown
         assert run_once("test-reset-request")
@@ -374,7 +399,9 @@ def test_reset_does_not_enumerate_accounts_and_revokes_existing_sessions(lead):
 def test_expired_password_reset_does_not_change_password(lead):
     with account_client() as account, account_client() as public:
         invite_and_activate(lead, account)
-        ok(public.post(RESET_REQUEST, json={"email": HEAD_EMAIL}))
+        ok(public.post(RESET_REQUEST, json={
+            "email": HEAD_EMAIL, "kind": "email", "destination": backup_email(HEAD_EMAIL),
+        }))
         assert run_once("test-reset-expiration")
         token_id, token = last_challenge(HEAD_EMAIL, "reset")
         with SessionLocal.begin() as db:

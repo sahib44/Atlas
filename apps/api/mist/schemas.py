@@ -29,6 +29,7 @@ class UserView(BaseModel):
     is_active: bool
     managed_account: bool = False
     department: UserDepartmentView | None = None
+    recovery_required: bool = False
 
 
 class ProfileUpdate(Input):

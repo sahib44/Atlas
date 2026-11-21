@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext } from "react";
 
 export const SessionScope = createContext("");
-const sessionQueryKey = ["/auth/me"] as const;
+export const sessionQueryKey = ["/auth/me"] as const;
 
 class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -33,8 +33,10 @@ export type User = {
   permissions: string[];
   is_active: boolean;
   managed_account?: boolean;
+  recovery_required?: boolean;
   department?: Department | null;
 };
+export type AccountMode = { managed: boolean; sms_available?: boolean };
 export async function api<T = any>(
   path: string,
   method = "GET",

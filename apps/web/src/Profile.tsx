@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { accountRoleLabel, useAction, type User } from "./api";
+import { RecoveryMethods } from "./Recovery";
 import { ErrorBox, Field, Heading, Modal, Panel } from "./ui";
 
 export function Profile({ user }: { user: User }) {
@@ -51,6 +52,7 @@ export function Profile({ user }: { user: User }) {
         {action.isSuccess && !dirty && <p role="status" className="caption">Profile saved.</p>}
       </form>
     </Panel>
+    {user.managed_account && <RecoveryMethods />}
     {confirmBack && <Modal title="Save profile changes?" onClose={() => setConfirmBack(false)}>
       <p>Save your changes before going back?</p>
       <ErrorBox error={action.error} />

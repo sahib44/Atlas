@@ -8,12 +8,12 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy import select, delete, text, func
 from sqlalchemy.exc import IntegrityError
-from .account_config import managed_mode, managed_origin, signing_key
+from .account_config import managed_mode, managed_origin, recovery_key, signing_key
 from .db import get_db, now
 from .models import *
 from .schemas import *
 from . import schemas as s
-from .auth import current_user, require, allowed, login, fail
+from .auth import current_user, session_user, require, allowed, login, fail
 from .assignments import lock_assignments, merge_assignment_contacts
 from .services import *
 
@@ -22,6 +22,7 @@ async def lifespan(app):
     if managed_mode():
         managed_origin()
         signing_key()
+        recovery_key()
     yield
 
 
@@ -87,21 +88,26 @@ def sign_in(data: Login, response: Response, db=Depends(get_db)):
 
 def session_profile(db, user):
     from .accounts import department_for
+    from .recovery import has_verified_recovery
 
     view = UserView.model_validate(user)
     department = department_for(db, user) if user.managed_account else None
     if department:
         view.department = UserDepartmentView.model_validate(department)
+    view.recovery_required = user.managed_account and not has_verified_recovery(db, user)
     return view
 
 
 @app.get("/api/auth/account-mode")
 def account_mode():
-    return {"managed": managed_mode()}
+    from .recovery import sms_available
+
+    managed = managed_mode()
+    return {"managed": managed, "sms_available": managed and sms_available()}
 
 
 @app.get("/api/auth/me", response_model=UserView)
-def me(user=Depends(current_user), db=Depends(get_db)):
+def me(user=Depends(session_user), db=Depends(get_db)):
     return session_profile(db, user)
 
 
@@ -122,7 +128,7 @@ def update_profile(data: ProfileUpdate, user=Depends(current_user), db=Depends(g
 
 @app.post("/api/auth/logout")
 def logout(
-    request: Request, response: Response, user=Depends(current_user), db=Depends(get_db)
+    request: Request, response: Response, user=Depends(session_user), db=Depends(get_db)
 ):
     db.execute(
         delete(Session).where(
@@ -165,7 +171,7 @@ def update_user(
 ):
     target = get(db, User, id, True)
     if target.managed_account:
-        fail("forbidden", "Managed accounts use department assignment actions.", 403)
+        fail("forbidden", "Manage competition head assignments in User Management.", 403)
     if target.id == user.id and (data.role != "director" or not data.is_active):
         fail("self_demotion", "You cannot disable or demote your own director account.")
     before = UserView.model_validate(target).model_dump(mode="json")
@@ -459,6 +465,7 @@ def audit_events(
 
 
 from .accounts import router as accounts_router
+from .recovery import router as recovery_router
 from .imports import router as imports_router
 from .campaigns import outbox_scope, router as campaigns_router
 from .tickets import router as tickets_router
@@ -469,6 +476,7 @@ from .inbox import router as inbox_router
 from .recruitment import merge_recruitment_contacts, router as recruitment_router
 
 app.include_router(accounts_router)
+app.include_router(recovery_router)
 app.include_router(imports_router)
 app.include_router(campaigns_router)
 app.include_router(tickets_router)

@@ -32,13 +32,14 @@ import {
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { SessionScope, useSession, useData, useAction, User, Page, can, accountRoleLabel } from "./api";
+import { SessionScope, api, sessionQueryKey, useSession, useData, useAction, User, Page, can, accountRoleLabel, type AccountMode } from "./api";
 import { useQueryClient } from "@tanstack/react-query";
 import { ErrorBox, Loading, HistoryBack, Modal } from "./ui";
 import { Dashboard, AuditPage } from "./Overview";
 import { JudgeConversation, Notifications } from "./Inbox";
 import { Profile } from "./Profile";
-import { AccountAccessForm, accountAccessCopy, type AccountAccessKind, UserManagement } from "./Accounts";
+import { AccountAccessForm, accountAccessCopy, type AccountAccessKind, useAccountLinkToken, UserManagement } from "./Accounts";
+import { RecoveryMethods, VerifyRecoveryMethod } from "./Recovery";
 import "./judge-workspace.css";
 import { Imports, ImportWizard, Duplicates, DuplicateDetail } from "./Imports";
 import { Campaigns, CampaignNew, CampaignDetail, Outbox } from "./Campaigns";
@@ -170,26 +171,34 @@ function AccountFrame({ theme, onChangeTheme, title, description, children }: Ap
   );
 }
 
-function Login({ theme, onChangeTheme }: AppearanceProps) {
-  const action = useAction();
+function Login({ theme, onChangeTheme, verificationLink = false }: AppearanceProps & { verificationLink?: boolean }) {
+  const cache = useQueryClient();
   const navigate = useNavigate();
-  const mode = useData<{ managed: boolean }>("/auth/account-mode");
+  const mode = useData<AccountMode>("/auth/account-mode");
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [failure, setFailure] = useState<unknown>(null);
   const form = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "" },
   });
   const { email: emailError, password: passwordError } = form.formState.errors;
+  const pending = form.formState.isSubmitting;
   return (
-    <AccountFrame theme={theme} onChangeTheme={onChangeTheme} title="Sign in" description="Your MIST NJ workspace.">
+    <AccountFrame theme={theme} onChangeTheme={onChangeTheme} title="Sign in"
+      description={verificationLink ? "Sign in to verify your recovery method." : "Your MIST NJ workspace."}>
         <form
           noValidate
-          aria-busy={action.isPending}
+          aria-busy={pending}
           onSubmit={form.handleSubmit(async (values) => {
+            setFailure(null);
             try {
-              await action.mutateAsync({ path: "/auth/login", body: values });
-              navigate("/dashboard");
-            } catch {}
+              const user = await api<User>("/auth/login", "POST", values);
+              await cache.cancelQueries({ queryKey: sessionQueryKey });
+              cache.setQueryData(sessionQueryKey, user);
+              if (!verificationLink) navigate(user.recovery_required ? "/recovery-setup" : "/dashboard");
+            } catch (error) {
+              setFailure(error);
+            }
           })}
         >
           <div className="field">
@@ -229,15 +238,32 @@ function Login({ theme, onChangeTheme }: AppearanceProps) {
             </div>
             {passwordError && <span id="login-password-error" className="login-field-error" role="alert">{passwordError.message}</span>}
           </div>
-          <ErrorBox error={!emailError && !passwordError ? action.error : null} />
-          <button type="submit" className="primary login-submit" disabled={action.isPending}>
-            {action.isPending && <LoaderCircle size={17} aria-hidden="true" />}
-            {action.isPending ? "Signing in…" : "Sign in"}
+          <ErrorBox error={!emailError && !passwordError ? failure : null} />
+          <button type="submit" className="primary login-submit" disabled={pending}>
+            {pending && <LoaderCircle size={17} aria-hidden="true" />}
+            {pending ? "Signing in…" : "Sign in"}
           </button>
         </form>
         {mode.data?.managed && <p className="account-access-link"><Link to="/forgot-password">Forgot password?</Link></p>}
     </AccountFrame>
   );
+}
+
+function RecoveryVerificationPage({ user, loading, onSignOut, signingOut, signOutError, ...appearance }: AppearanceProps & {
+  user: User | null | undefined;
+  loading: boolean;
+  onSignOut: () => void;
+  signingOut: boolean;
+  signOutError: unknown;
+}) {
+  const [token] = useAccountLinkToken();
+  if (loading) return <Loading />;
+  if (!user) return <Login {...appearance} verificationLink />;
+  return <AccountFrame {...appearance} title="Verify recovery method" description="Confirm this backup method for your Atlas account.">
+    <VerifyRecoveryMethod token={token} enrollment={!!user.recovery_required} />
+    <ErrorBox error={signOutError} />
+    <p className="account-access-link"><button type="button" disabled={signingOut} onClick={onSignOut}>Sign out</button></p>
+  </AccountFrame>;
 }
 
 const accountAccessRoutes: Record<string, AccountAccessKind> = {
@@ -359,7 +385,7 @@ export default function App() {
   const auth = useSession();
   const cache = useQueryClient();
   const user = auth.data;
-  const scope = user ? JSON.stringify([user.id, user.role, [...user.permissions].sort(), user.managed_account, user.department?.slug]) : "";
+  const scope = user ? JSON.stringify([user.id, user.role, [...user.permissions].sort(), user.managed_account, user.department?.slug, user.recovery_required]) : "";
   const previousScope = useRef("");
   useEffect(() => {
     const previous = previousScope.current;
@@ -375,7 +401,8 @@ export default function App() {
     () => window.localStorage.getItem("mist-sidebar-collapsed") === "true",
   );
   const { pathname } = useLocation();
-  const accountAccess = accountAccessRoutes[pathname.replace(/\/$/, "")];
+  const accountPath = pathname.replace(/\/$/, "");
+  const accountAccess = accountAccessRoutes[accountPath];
   const judgeWorkspace = pathname === "/recruitment" || pathname === "/judges";
   const ticketWorkspace = /^\/tickets(?:\/(?!new$)[^/]+)?$/.test(pathname);
   const [theme, setTheme] = useState(loadTheme);
@@ -392,6 +419,11 @@ export default function App() {
     desktop.addEventListener("change", closeOnDesktop);
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, []);
+  const signOut = () => action.mutate({ path: "/auth/logout" });
+  if (accountPath === "/verify-recovery") {
+    return <RecoveryVerificationPage theme={theme} onChangeTheme={setTheme} user={user} loading={auth.isPending}
+      onSignOut={signOut} signingOut={action.isPending} signOutError={action.error} />;
+  }
   if (accountAccess) {
     const { title, description } = accountAccessCopy(accountAccess);
     return <AccountFrame theme={theme} onChangeTheme={setTheme} title={title} description={description}>
@@ -406,7 +438,18 @@ export default function App() {
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
-  const signOut = () => action.mutate({ path: "/auth/logout" });
+  if (user.recovery_required) {
+    if (accountPath !== "/recovery-setup") return <Navigate to="/recovery-setup" replace />;
+    return <SessionScope.Provider key={scope} value={scope}>
+      <AccountFrame theme={theme} onChangeTheme={setTheme} title="Set up account recovery"
+        description="Verify a backup method to continue to your Atlas workspace.">
+        <RecoveryMethods enrollment />
+        <ErrorBox error={action.error} />
+        <p className="account-access-link"><button type="button" disabled={action.isPending} onClick={signOut}>Sign out</button></p>
+      </AccountFrame>
+    </SessionScope.Provider>;
+  }
+  if (accountPath === "/recovery-setup") return <Navigate to="/dashboard" replace />;
   const closeNavigation = () => {
     setMenu(false);
     requestAnimationFrame(() => menuTrigger.current?.focus());

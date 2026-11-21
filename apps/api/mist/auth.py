@@ -57,7 +57,7 @@ def has_managed_assignment(db, user):
     )) is not None
 
 
-def current_user(request: Request, db=Depends(get_db)):
+def session_user(request: Request, db=Depends(get_db)):
     token = request.cookies.get("mist_session", "")
     session = db.scalar(
         select(Session).where(
@@ -77,6 +77,14 @@ def current_user(request: Request, db=Depends(get_db)):
         and request.headers.get("X-MIST-Request") != "1"
     ):
         fail("csrf", "Missing request protection header.", 403)
+    return user
+
+
+def current_user(user=Depends(session_user), db=Depends(get_db)):
+    from .recovery import has_verified_recovery
+
+    if user.managed_account and not has_verified_recovery(db, user):
+        fail("recovery_required", "Verify a backup recovery method to access the workspace.", 403)
     return user
 
 

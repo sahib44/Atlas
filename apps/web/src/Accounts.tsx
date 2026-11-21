@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { History, MailPlus, UserRound } from "lucide-react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { api, date, label, useAction, useData, type Department } from "./api";
+import { api, date, label, sessionQueryKey, useAction, useData, type AccountMode, type Department, type User } from "./api";
 import { Empty, ErrorBox, Field, Heading, Loading, Modal } from "./ui";
 import "./accounts.css";
 
@@ -57,8 +57,8 @@ const operations = {
     destructive: true,
   },
   reassign: {
-    title: "Reassign", submit: "Reassign account", notice: "Department assignment updated.",
-    detail: "This ends the current assignment and makes the selected department their primary responsibility.",
+    title: "Reassign", submit: "Reassign account", notice: "Competition assignment updated.",
+    detail: "This ends the current assignment and makes the competitions for the selected position their primary responsibility.",
   },
 } satisfies Record<string, { title: string; submit: string; notice: string; detail?: string; destructive?: boolean }>;
 type Operation = keyof typeof operations;
@@ -113,7 +113,7 @@ export function UserManagement() {
       if (!position.assignment_id) return;
       const target = String(fields.get("target_slug") || "");
       if (operation === "reassign" && !openPositions.some(item => item.slug === target)) {
-        setValidationError("Choose an available department.");
+        setValidationError("Choose an available competition head position.");
         return;
       }
       body = { assignment_id: position.assignment_id, ...(operation === "reassign" ? { target_slug: target } : {}) };
@@ -127,7 +127,7 @@ export function UserManagement() {
 
   const selected = dialog && operations[dialog.operation];
   return <div className="accounts-page">
-    <Heading title="User Management" description="Manage individually invited MIST accounts and their department assignments." />
+    <Heading title="User Management" description="Manage invited accounts and competition head positions." />
     <ErrorBox error={positions.error || (!dialog && action.error)} />
     {notice && <p className="account-notice" role="status">{notice}</p>}
     {positions.isPending && <Loading />}
@@ -179,9 +179,9 @@ export function UserManagement() {
         {dialog.operation === "invite" && <Field label="MIST email address">
           <input name="email" type="email" required maxLength={254} autoComplete="off" placeholder="name@getmistified.com" />
         </Field>}
-        {dialog.operation === "reassign" && <Field label="Target department">
+        {dialog.operation === "reassign" && <Field label="Competition head position">
           <select name="target_slug" required defaultValue="">
-            <option value="">Choose a department</option>
+            <option value="">Choose a position</option>
             {openPositions.map(position => <option key={position.slug} value={position.slug}>{position.name}</option>)}
           </select>
         </Field>}
@@ -204,14 +204,14 @@ const accessForms = {
     title: "Activate your account",
     description: "Choose a password for your invited MIST account.",
     submit: "Activate account",
-    complete: "Your account is active. You can now sign in.",
+    complete: "Your account is active. Sign in to set up account recovery.",
     path: "/accounts/activate",
   },
   forgot: {
     title: "Forgot password",
-    description: "Enter the MIST email address you use to sign in.",
+    description: "Enter your sign-in email and a recovery method you already verified.",
     submit: "Request password reset",
-    complete: "If an active account exists for that address, a password reset email has been requested.",
+    complete: "If those details match a verified recovery method, you’ll receive password reset instructions.",
     path: "/accounts/password-reset/request",
   },
   reset: {
@@ -225,27 +225,31 @@ const accessForms = {
 
 export const accountAccessCopy = (kind: AccountAccessKind) => accessForms[kind];
 
+export function useAccountLinkToken(enabled = true) {
+  const location = useLocation();
+  const [token, setToken] = useState(() => enabled ? new URLSearchParams(window.location.hash.slice(1)).get("token") : null);
+
+  useLayoutEffect(() => {
+    if (!enabled) return;
+    const { hash, search, pathname } = window.location;
+    if (hash) setToken(new URLSearchParams(hash.slice(1)).get("token"));
+    if (hash || search) window.history.replaceState(window.history.state, "", pathname);
+  }, [enabled, location.hash, location.search]);
+
+  return [token, setToken] as const;
+}
+
 export function AccountAccessForm({ kind }: { kind: AccountAccessKind }) {
   const config = accessForms[kind];
   const cache = useQueryClient();
-  const mode = useData<{ managed: boolean }>("/auth/account-mode");
-  const location = useLocation();
-  const [token, setToken] = useState(() => kind === "forgot" ? null : new URLSearchParams(window.location.hash.slice(1)).get("token"));
+  const mode = useData<AccountMode>("/auth/account-mode");
+  const navigate = useNavigate();
+  const [token, setToken] = useAccountLinkToken(kind !== "forgot");
   const inFlight = useRef(false);
   const [pending, setPending] = useState(false);
   const [complete, setComplete] = useState(false);
   const [failure, setFailure] = useState<unknown>(null);
-
-  useEffect(() => {
-    if (kind === "forgot") return;
-    const { hash, search, pathname } = window.location;
-    if (hash) {
-      setToken(new URLSearchParams(hash.slice(1)).get("token"));
-      setComplete(false);
-      setFailure(null);
-    }
-    if (hash || search) window.history.replaceState(window.history.state, "", pathname);
-  }, [kind, location.hash, location.search]);
+  const [channel, setChannel] = useState("email");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -261,13 +265,22 @@ export function AccountAccessForm({ kind }: { kind: AccountAccessKind }) {
     setFailure(null);
     try {
       // Keep credentials and link tokens out of the workspace mutation cache.
-      await api(config.path, "POST", kind === "forgot" ? { email: fields.get("email") } : {
-        token, password,
-        ...(kind === "activate" ? { full_name: fields.get("full_name") } : {}),
-      });
+      const result = await api<{ ok: boolean; email?: string }>(config.path, "POST", kind === "forgot" ? {
+        email: fields.get("email"), kind: channel, destination: fields.get("destination"),
+      } : { token, password, ...(kind === "activate" ? { full_name: fields.get("full_name") } : {}) });
       setToken(null);
       setComplete(true);
-      if (kind === "reset") void cache.invalidateQueries({ queryKey: ["/auth/me"] });
+      if (kind === "reset") void cache.invalidateQueries({ queryKey: sessionQueryKey });
+      if (kind === "activate" && result.email) {
+        try {
+          const user = await api<User>("/auth/login", "POST", { email: result.email, password });
+          await cache.cancelQueries({ queryKey: sessionQueryKey });
+          cache.setQueryData(sessionQueryKey, user);
+          navigate("/recovery-setup", { replace: true });
+        } catch {
+          // Activation is complete even if the follow-up sign-in fails.
+        }
+      }
     } catch (error) {
       setFailure(error);
     } finally {
@@ -283,9 +296,23 @@ export function AccountAccessForm({ kind }: { kind: AccountAccessKind }) {
     {mode.data?.managed && (complete ? <p className="account-notice" role="status">{config.complete}</p>
       : kind !== "forgot" && !token ? <ErrorBox error="Use the complete link from your email." />
       : <form onSubmit={submit} aria-busy={pending}>
-        {kind === "forgot" ? <Field label="MIST email address">
-          <input type="email" name="email" required maxLength={254} autoComplete="username" />
-        </Field> : <>
+        {kind === "forgot" ? <>
+          <Field label="MIST email address">
+            <input type="email" name="email" required maxLength={254} autoComplete="username" />
+          </Field>
+          <Field label="Recovery method">
+            <select value={channel} onChange={event => setChannel(event.target.value)}>
+              <option value="email">Email</option>
+              <option value="sms" disabled={!mode.data.sms_available}>Phone (SMS)</option>
+            </select>
+          </Field>
+          {!mode.data.sms_available && <p className="account-password-guidance">SMS recovery is unavailable until a provider is configured.</p>}
+          <Field label={channel === "sms" ? "Recovery phone number" : "Recovery email address"}>
+            <input key={channel} name="destination" type={channel === "sms" ? "tel" : "email"}
+              required maxLength={channel === "sms" ? 32 : 254} autoComplete={channel === "sms" ? "tel" : "email"}
+              placeholder={channel === "sms" ? "+1 555 000 0100" : undefined} />
+          </Field>
+        </> : <>
           {kind === "activate" && <Field label="Full name">
             <input name="full_name" required maxLength={200} autoComplete="name" />
           </Field>}

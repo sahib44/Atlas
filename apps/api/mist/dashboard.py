@@ -22,7 +22,7 @@ def department_dashboard(
 
     department = department_for(db, user) if user.managed_account else None
     if not department or not allowed(user, "judges"):
-        fail("forbidden", "Your account has no department dashboard.", 403)
+        fail("forbidden", "Your account has no assigned competitions dashboard.", 403)
     year = event_year if event_year is not None else tournament_options(db)["default_year"]
     scope = active_competitions().where(
         PilotCompetition.category_slug == department["category_slug"],

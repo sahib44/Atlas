@@ -117,21 +117,21 @@ function DepartmentOverview({ department, tournament }: { department: Department
       <ViewAll to={tournamentPath("/competitions", tournament.year)}>Open all competitions</ViewAll>
     </div>}>
     <p className="department-summary">
-      Your primary department{openSlots !== undefined && <> · {openSlots} judge {openSlots === 1 ? "slot" : "slots"} open</>}
+      Your primary competitions{openSlots !== undefined && <> · {openSlots} judge {openSlots === 1 ? "slot" : "slots"} open</>}
     </p>
     <ErrorBox error={tournament.error || query.error} />
     {!tournament.error && (query.isPending ? <Loading /> : items && (items.length
       ? <CompetitionCards items={items} />
-      : <Empty>No competitions for this department in the selected tournament.</Empty>))}
+      : <Empty>No assigned competitions for the selected tournament.</Empty>))}
     {query.data && <>
-      <h3>Department activity</h3>
+      <h3>Competitions activity</h3>
       {query.data.activity.length ? <ul className="department-activity">
         {query.data.activity.map(event => <li key={event.id} className="overview-activity-row">
           <Clock size={17} aria-hidden="true" />
           <span>{event.summary}</span>
           <time dateTime={event.created_at}>{date(event.created_at)}</time>
         </li>)}
-      </ul> : <Empty>No recent department activity.</Empty>}
+      </ul> : <Empty>No recent competition activity.</Empty>}
     </>}
   </Panel>;
 }

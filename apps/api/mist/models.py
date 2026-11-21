@@ -106,6 +106,9 @@ class AccountToken(Record, Base):
     email: Mapped[str] = mapped_column(String(254))
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), index=True)
     assignment_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("department_assignments.id"), index=True)
+    recovery_method_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("account_recovery_methods.id", name="fk_account_token_recovery_method"), index=True,
+    )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True)
     expires_at: Mapped[object] = mapped_column(DateTime(timezone=True), index=True)
     used_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
@@ -113,8 +116,10 @@ class AccountToken(Record, Base):
     expired_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint(
-            "(purpose = 'activate' AND assignment_id IS NOT NULL AND user_id IS NULL) OR "
-            "(purpose = 'reset' AND user_id IS NOT NULL)",
+            "(purpose = 'activate' AND assignment_id IS NOT NULL AND user_id IS NULL AND recovery_method_id IS NULL) OR "
+            "(purpose = 'reset' AND user_id IS NOT NULL AND (recovery_method_id IS NOT NULL "
+            "OR num_nonnulls(used_at, revoked_at, expired_at) > 0)) OR "
+            "(purpose = 'verify_recovery' AND user_id IS NOT NULL AND recovery_method_id IS NOT NULL)",
             name="ck_account_token_scope",
         ),
         CheckConstraint(
@@ -133,6 +138,10 @@ class AccountToken(Record, Base):
             unique=True,
             postgresql_where=text("purpose = 'reset' AND used_at IS NULL AND revoked_at IS NULL AND expired_at IS NULL"),
         ),
+        Index(
+            "uq_pending_recovery_verification", "recovery_method_id", unique=True,
+            postgresql_where=text("purpose = 'verify_recovery' AND used_at IS NULL AND revoked_at IS NULL AND expired_at IS NULL"),
+        ),
     )
 
 
@@ -140,7 +149,41 @@ class AccountResetRequest(Base):
     __tablename__ = "account_reset_requests"
     id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(254))
+    recovery_kind: Mapped[str | None] = mapped_column(String(12))
+    recovery_key: Mapped[str | None] = mapped_column(String(64))
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), default=now, index=True)
+
+
+class RecoveryMethod(Record, Base):
+    __tablename__ = "account_recovery_methods"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(12))
+    encrypted_destination: Mapped[bytes | None] = mapped_column(LargeBinary)
+    destination_key: Mapped[str | None] = mapped_column(String(64))
+    verified_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    removed_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    preferred: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    __table_args__ = (
+        UniqueConstraint("user_id", "kind", "destination_key", name="uq_account_recovery_destination"),
+        CheckConstraint("kind IN ('email', 'sms')", name="ck_recovery_method_kind"),
+        CheckConstraint(
+            "(removed_at IS NULL AND encrypted_destination IS NOT NULL AND destination_key IS NOT NULL) OR "
+            "(removed_at IS NOT NULL AND encrypted_destination IS NULL AND destination_key IS NULL)",
+            name="ck_recovery_destination_lifecycle",
+        ),
+        CheckConstraint(
+            "NOT preferred OR (verified_at IS NOT NULL AND removed_at IS NULL)",
+            name="ck_recovery_preferred_is_active",
+        ),
+        Index("uq_preferred_recovery_method", "user_id", unique=True, postgresql_where=text("preferred")),
+    )
+
+
+class RecoveryRateLimit(Base):
+    __tablename__ = "account_recovery_rate_limits"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[object] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class Catalog(Record):

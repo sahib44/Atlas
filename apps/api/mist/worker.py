@@ -5,11 +5,12 @@ import logging
 import socket
 import threading
 import time
+from dataclasses import dataclass
 from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Protocol
 from sqlalchemy import select, or_, and_
-from .account_config import managed_mode, managed_origin, signing_key
+from .account_config import managed_mode, managed_origin, recovery_key, signing_key
 from .db import SessionLocal, now
 from .models import Outbound, Recipient, Campaign, Judge, PilotCompetition, PilotNomination, Ticket, TicketMessage
 from .assignments import lock_assignments
@@ -18,8 +19,17 @@ from .services import contact_email, audit, lock_contact_writes
 log = logging.getLogger("mist.worker")
 
 
+@dataclass(frozen=True)
+class PrivateAccountEmail:
+    recipient_email: str
+    recipient_name: str
+    subject: str
+    idempotency_key: str
+    simulate_failure: bool
+
+
 class EmailProvider(Protocol):
-    def send(self, message: Outbound, *, body_text: str | None = None) -> str: ...
+    def send(self, message: Outbound | PrivateAccountEmail, *, body_text: str | None = None) -> str: ...
 
 
 class MockEmailProvider:
@@ -73,7 +83,8 @@ def claim(db, worker_id):
 
 
 def deliver_account_email(db, id, worker_id):
-    from .accounts import account_mail_payload, lock_accounts
+    from .accounts import account_mail_delivery, lock_accounts
+    from .recovery import get_sms_provider
 
     lock_accounts(db)
     message = db.scalar(
@@ -83,22 +94,35 @@ def deliver_account_email(db, id, worker_id):
     if message.status != "sending" or message.claimed_by != worker_id:
         db.rollback()
         return
-    body = account_mail_payload(db, message) if managed_mode() else None
-    if body is None:
-        message.status = "cancelled"
-        message.last_error = "Account link is no longer deliverable"
-    else:
-        message.attempt_count += 1
-        try:
-            # Bearer links only enter the provider in memory and are never written to Outbox.
-            message.provider_message_id = MockEmailProvider().send(message, body_text=body)
+    try:
+        delivery = account_mail_delivery(db, message) if managed_mode() else None
+        if delivery is None:
+            message.status = "cancelled"
+            message.last_error = "Account link is no longer deliverable"
+        else:
+            kind, destination, body = delivery
+            if kind == "sms":
+                sms = get_sms_provider()
+                if sms is None:
+                    raise RuntimeError("SMS recovery delivery is unavailable")
+                receipt = sms.send(destination=destination, body_text=body, idempotency_key=message.idempotency_key)
+            else:
+                envelope = PrivateAccountEmail(
+                    recipient_email=destination, recipient_name=destination, subject=message.subject,
+                    idempotency_key=message.idempotency_key, simulate_failure=message.simulate_failure,
+                )
+                receipt = MockEmailProvider().send(envelope, body_text=body)
+            message.provider_message_id = receipt
+            message.attempt_count += 1
             message.status, message.completed_at, message.last_error = "sent", now(), ""
-        except Exception:
-            message.status = "failed" if message.attempt_count >= 3 else "queued"
-            message.available_at = now() + timedelta(seconds=2**message.attempt_count)
-            message.last_error = "Account email could not be delivered"
+    except Exception:
+        # A provider exception could include the destination or bearer link.
+        message.attempt_count += 1
+        message.status = "failed" if message.attempt_count >= 3 else "queued"
+        message.available_at = now() + timedelta(seconds=2**message.attempt_count)
+        message.last_error = "Account message could not be delivered"
     message.claimed_at, message.claimed_by = None, None
-    audit(db, None, "account.email_attempt", message, "Processed account email",
+    audit(db, None, "account.email_attempt", message, "Processed account message",
           after={"status": message.status, "attempt_count": message.attempt_count})
     db.commit()
 
@@ -277,6 +301,7 @@ if __name__ == "__main__":
     if managed_mode():
         managed_origin()
         signing_key()
+        recovery_key()
     if "--once" in sys.argv:
         while run_once():
             pass

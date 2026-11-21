@@ -8,17 +8,20 @@ import os
 import sys
 from datetime import timedelta
 from getpass import getpass
+from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
+from argon2.exceptions import VerifyMismatchError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field
 from sqlalchemy import String, cast, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 
-from .account_config import managed_mode, managed_origin, signing_key
+from .account_config import managed_mode, managed_origin, recovery_key, signing_key
 from .auth import current_user, fail, hasher
 from .db import SessionLocal, get_db, now
-from .models import AccountResetRequest, AccountToken, Audit, Department, DepartmentAssignment, Outbound, PilotCompetition, Session, User
+from .models import AccountResetRequest, AccountToken, Audit, Department, DepartmentAssignment, Outbound, PilotCompetition, RecoveryMethod, Session, User
 from .schemas import Input
 from .services import audit, contact_email, contact_name
 
@@ -36,10 +39,16 @@ INVITE_LIFETIME = timedelta(hours=48)
 RESET_LIFETIME = timedelta(minutes=30)
 RESET_COOLDOWN = timedelta(minutes=5)
 INVALID_TOKEN = "This link is invalid or no longer available. Ask for a new link."
+PRIVATE_RECOVERY_ADDRESS = "undisclosed@recovery.invalid"
 
 
 class EmailInput(Input):
     email: str = Field(max_length=254)
+
+
+class ResetRequestInput(EmailInput):
+    kind: Literal["email", "sms"] = "email"
+    destination: str = Field(default="", max_length=254)
 
 
 class AssignmentInput(Input):
@@ -65,7 +74,7 @@ def lock_accounts(db):
 
 def require_managed_lead(user=Depends(current_user)):
     if not managed_mode() or not user.managed_account or user.role != "competitions_chair":
-        fail("forbidden", "Only the Competitions Lead can manage department accounts.", 403)
+        fail("forbidden", "Only the Competitions Lead can manage competition head accounts.", 403)
     return user
 
 
@@ -96,7 +105,7 @@ def validated_name(value):
 def find_position(db, slug):
     position = db.get(Department, slug)
     if not position:
-        fail("not_found", "Department position not found.", 404)
+        fail("not_found", "Competition head position not found.", 404)
     return position
 
 
@@ -155,8 +164,9 @@ def token_audit(db, actor, token, action, summary):
     if token.purpose == "activate":
         assignment = db.get(DepartmentAssignment, token.assignment_id)
         assignment_audit(db, actor, assignment, f"invitation_{action}", summary)
-    else:
-        audit(db, actor, f"account.password_reset_{action}", token, summary)
+        return
+    event = "recovery_verification" if token.purpose == "verify_recovery" else "password_reset"
+    audit(db, actor, f"account.{event}_{action}", token, summary)
 
 
 def mark_expired(db, token, stamp):
@@ -198,24 +208,36 @@ def token_digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def issue_token(db, actor, purpose, address, assignment=None, user=None, resent=False):
+def issue_token(db, actor, purpose, address=None, assignment=None, user=None, resent=False, recovery_method=None):
+    address = PRIVATE_RECOVERY_ADDRESS if recovery_method is not None else address
     token = AccountToken(
         id=uuid4(), purpose=purpose, email=address,
         assignment_id=assignment.id if assignment else None,
         user_id=user.id if user else None,
+        recovery_method_id=recovery_method.id if recovery_method else None,
         expires_at=now() + (INVITE_LIFETIME if purpose == "activate" else RESET_LIFETIME),
     )
     token.token_hash = token_digest(raw_account_token(token))
     db.add(token)
     db.flush()
+    subjects = {
+        "activate": "Activate your MIST Atlas account",
+        "reset": "Reset your MIST Atlas password",
+        "verify_recovery": "Verify your MIST Atlas recovery method",
+    }
     db.add(Outbound(
         account_token_id=token.id, recipient_email=address, recipient_name=address,
-        subject="Activate your MIST Atlas account" if purpose == "activate" else "Reset your MIST Atlas password",
+        subject=subjects[purpose],
+        provider="sms" if recovery_method is not None and recovery_method.kind == "sms" else "mock",
         body_text="Private account message. Its link is generated in memory during delivery.",
         idempotency_key=f"account:{token.id}",
     ))
-    token_audit(db, actor, token, "resent" if resent else "created",
-                "Invitation resent" if resent else "Invitation created" if purpose == "activate" else "Password reset requested")
+    events = {
+        "activate": ("Invitation resent", "Invitation created"),
+        "verify_recovery": ("Recovery verification resent", "Recovery verification created"),
+        "reset": ("Password reset resent", "Password reset requested"),
+    }
+    token_audit(db, actor, token, "resent" if resent else "created", events[purpose][0 if resent else 1])
     return token
 
 
@@ -226,18 +248,28 @@ def token_context(db, token):
             return None
         return assignment, None
     user = db.get(User, token.user_id)
-    if not user or not user.is_active or not user.managed_account or user.email != token.email:
+    if not user or not user.is_active or not user.managed_account or not token.recovery_method_id:
         return None
     if user.role == "competitions_member":
-        if not assignment or assignment.ended_at is not None or assignment.user_id != user.id or assignment.email != token.email:
+        assignment = live_assignment(db, user_id=user.id, email=user.email)
+        if assignment is None or (token.assignment_id and token.assignment_id != assignment.id):
             return None
     elif user.role != "competitions_chair" or assignment:
+        return None
+    method = db.get(RecoveryMethod, token.recovery_method_id)
+    if not method or method.user_id != user.id or method.removed_at is not None:
+        return None
+    from .recovery import uses_shared_mailbox
+
+    if uses_shared_mailbox(user, method):
+        return None
+    if (token.purpose == "reset") != bool(method.verified_at):
         return None
     return assignment, user
 
 
-def account_mail_payload(db, msg):
-    """Return a private message body for one valid account token, without persisting it."""
+def account_mail_delivery(db, msg):
+    """Resolve a private message and destination in memory for the worker."""
     if not managed_mode() or msg.account_token_id is None:
         return None
     lock_accounts(db)
@@ -250,17 +282,29 @@ def account_mail_payload(db, msg):
     raw = raw_account_token(token)
     if not hmac.compare_digest(token.token_hash, token_digest(raw)):
         return None
-    route = "/activate" if token.purpose == "activate" else "/reset-password"
-    return (
+    routes = {"activate": "/activate", "reset": "/reset-password", "verify_recovery": "/verify-recovery"}
+    route = routes[token.purpose]
+    body = (
         f"{msg.subject}\n\n{managed_origin()}{route}#token={raw}\n\n"
         "This link can be used once. If you did not expect this message, you can ignore it."
     )
+    if token.recovery_method_id:
+        from .recovery import decrypt_destination
+
+        method = db.get(RecoveryMethod, token.recovery_method_id)
+        return method.kind, decrypt_destination(method), body
+    return "email", token.email, body
 
 
-def usable_token(db, purpose, raw):
+def account_mail_payload(db, msg):
+    delivery = account_mail_delivery(db, msg)
+    return delivery[2] if delivery else None
+
+
+def usable_token(db, purpose, raw, *, owner_id=None):
     lock_accounts(db)
     token = db.scalar(select(AccountToken).where(AccountToken.token_hash == token_digest(raw), AccountToken.purpose == purpose))
-    if token and token_is_open(token):
+    if token and (owner_id is None or token.user_id == owner_id) and token_is_open(token):
         if token.expires_at <= now():
             mark_expired(db, token, now())
             db.commit()
@@ -313,7 +357,9 @@ def position_history(slug: str, user=Depends(require_managed_lead), db=Depends(g
         .order_by(Audit.created_at.desc(), Audit.id.desc()).limit(100)
     )
     return {"items": [
-        {"id": event.id, "action": event.action, "summary": event.summary, "created_at": event.created_at,
+        {"id": event.id, "action": event.action,
+         "summary": event.summary.replace("Department ", "Competition head ", 1) if event.summary.startswith("Department ") else event.summary,
+         "created_at": event.created_at,
          "email": (event.after_data or {}).get("email")}
         for event in events
     ]}
@@ -326,8 +372,8 @@ def invite(slug: str, data: EmailInput, user=Depends(require_managed_lead), db=D
     position = find_position(db, slug)
     if live_assignment(db, department_slug=slug):
         fail("position_occupied", "This position already has an account or invitation.", 409)
-    if account_on_record(db, address) or live_assignment(db, email=address):
-        fail("email_unavailable", "This address is unavailable for a department invitation.", 409)
+    if address == configured_lead_email() or account_on_record(db, address) or live_assignment(db, email=address):
+        fail("email_unavailable", "This address is unavailable for a competition head invitation.", 409)
     assignment = DepartmentAssignment(department_slug=slug, email=address)
     db.add(assignment)
     db.flush()
@@ -369,7 +415,7 @@ def revoke_invitation(slug: str, data: AssignmentInput, user=Depends(require_man
 def assigned_member(db, assignment):
     account = db.get(User, assignment.user_id) if assignment.user_id else None
     if not account or not account.managed_account or account.role != "competitions_member":
-        fail("wrong_account_state", "This position has no activated department account.", 409)
+        fail("wrong_account_state", "This position has no activated competition head account.", 409)
     return account
 
 
@@ -394,9 +440,9 @@ def change_account_status(slug: str, data: AssignmentInput, request: Request, us
     invalidate_tokens(db, user, user_id=account.id)
     invalidate_user_sessions(db, account)
     events = {
-        "deactivate": ("account_deactivated", "Department account deactivated"),
-        "reactivate": ("account_reactivated", "Department account reactivated"),
-        "revoke-account": ("account_revoked", "Department account revoked and position made available"),
+        "deactivate": ("account_deactivated", "Competition head account deactivated"),
+        "reactivate": ("account_reactivated", "Competition head account reactivated"),
+        "revoke-account": ("account_revoked", "Competition head account revoked and position made available"),
     }
     event, message = events[action]
     assignment_audit(db, user, assignment, event, message)
@@ -418,10 +464,10 @@ def reassign(slug: str, data: ReassignmentInput, user=Depends(require_managed_le
         fail("position_occupied", "Choose an unassigned position.", 409)
     invalidate_tokens(db, user, user_id=account.id)
     assignment.ended_at, assignment.end_reason = now(), "reassigned"
-    assignment_audit(db, user, assignment, "reassigned_from", "Department account moved to another position", target_slug=target.slug)
+    assignment_audit(db, user, assignment, "reassigned_from", "Competition head account moved to another position", target_slug=target.slug)
     replacement = DepartmentAssignment(department_slug=target.slug, email=account.email, user_id=account.id)
     db.add(replacement)
-    assignment_audit(db, user, replacement, "reassigned_to", "Department account assigned from another position", source_slug=source.slug)
+    assignment_audit(db, user, replacement, "reassigned_to", "Competition head account assigned from another position", source_slug=source.slug)
     result = position_view(db, target)
     db.commit()
     return result
@@ -441,16 +487,24 @@ def activate(data: ActivationInput, db=Depends(get_db)):
     db.flush()
     assignment.user_id = account.id
     token.used_at = now()
-    token_audit(db, account, token, "accepted", "Department invitation accepted")
+    token_audit(db, account, token, "accepted", "Competition head invitation accepted")
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "email": account.email}
 
 
 @router.post("/password-reset/request", dependencies=[Depends(public_account_request)])
-def request_reset(data: EmailInput, db=Depends(get_db)):
+def request_reset(data: ResetRequestInput, db=Depends(get_db)):
+    from .recovery import check_public_reset_attempt, destination_key, normalize_destination, sms_available
+
     try:
         address = mist_email(data.email)
+        destination = normalize_destination(data.kind, data.destination)
     except HTTPException:
+        return {"ok": True}
+    if data.kind == "sms" and not sms_available():
+        return {"ok": True}
+    key = destination_key(address, data.kind, destination)
+    if not check_public_reset_attempt(address, key):
         return {"ok": True}
     # Submissions share a capacity limit and do the same work for all MIST
     # addresses. Only the worker resolves identity against the accounts table.
@@ -458,30 +512,38 @@ def request_reset(data: EmailInput, db=Depends(get_db)):
     db.execute(delete(AccountResetRequest).where(AccountResetRequest.created_at <= now() - RESET_LIFETIME))
     if db.scalar(select(func.count()).select_from(AccountResetRequest)) >= 256:
         fail("reset_queue_busy", "Password recovery is busy. Try again shortly.", 503)
-    db.add(AccountResetRequest(email=address))
+    db.add(AccountResetRequest(email=address, recovery_kind=data.kind, recovery_key=key))
     db.commit()
     return {"ok": True}
 
 
 def process_reset_requests(db):
+    from .recovery import clear_expired_rates
+
     lock_accounts(db)
+    clear_expired_rates(db)
     requests = list(db.scalars(select(AccountResetRequest).order_by(
         AccountResetRequest.created_at, AccountResetRequest.id,
     ).limit(16).with_for_update()))
     oldest = now() - RESET_LIFETIME
     for request in requests:
-        if request.created_at > oldest:
-            queue_reset_email(db, request.email)
+        if request.created_at > oldest and request.recovery_key:
+            queue_reset_email(db, request.email, request.recovery_kind, request.recovery_key)
         db.delete(request)
     return len(requests)
 
 
-def queue_reset_email(db, address):
+def queue_reset_email(db, address, kind, key):
+    from .recovery import sms_available, verified_methods
+
     user = db.scalar(select(User).where(User.email == address, User.managed_account, User.is_active))
-    if not user:
+    if not user or (kind == "sms" and not sms_available()):
         return
     assignment = live_assignment(db, user_id=user.id, email=address)
     if user.role == "competitions_member" and assignment is None:
+        return
+    method = db.scalar(verified_methods(user).where(RecoveryMethod.kind == kind, RecoveryMethod.destination_key == key))
+    if not method:
         return
     recent = db.scalar(select(AccountToken.id).where(
         AccountToken.user_id == user.id, AccountToken.purpose == "reset",
@@ -489,19 +551,35 @@ def queue_reset_email(db, address):
     ).limit(1))
     if recent:
         return
-    invalidate_tokens(db, user_id=user.id)
-    issue_token(db, None, "reset", address, assignment=assignment, user=user)
+    invalidate_tokens(db, user_id=user.id, purpose="reset")
+    issue_token(db, None, "reset", assignment=assignment, user=user, recovery_method=method)
 
 
 @router.post("/password-reset/complete", dependencies=[Depends(public_account_request)])
 def complete_reset(data: TokenInput, db=Depends(get_db)):
+    from .recovery import check_reset_verification
+
+    check_reset_verification(db, data.token)
     token, _, user = usable_token(db, "reset", data.token)
     user.password_hash = hasher.hash(data.password)
     token.used_at = now()
+    invalidate_tokens(db, user, user_id=user.id, purpose="reset")
     invalidate_user_sessions(db, user)
     token_audit(db, user, token, "completed", "Account password reset and sessions revoked")
     db.commit()
     return {"ok": True}
+
+
+def configured_lead_email():
+    configured = os.getenv("MIST_COMPETITIONS_LEAD_EMAIL", "").strip()
+    return mist_email(configured) if configured else None
+
+
+def checked_lead_password(password):
+    password = password.strip()
+    if not 12 <= len(password) <= 200:
+        fail("invalid_password", "Use a password of 12 to 200 characters.", 422)
+    return password
 
 
 def bootstrap_lead(db, email, full_name, password):
@@ -509,15 +587,17 @@ def bootstrap_lead(db, email, full_name, password):
         fail("managed_mode_required", "Bootstrap requires MIST_ACCOUNT_MODE=managed.")
     managed_origin()
     signing_key()
-    address = mist_email(email)
+    recovery_key()
+    configured = configured_lead_email()
+    address = mist_email(email) if email else configured
+    if not address or (configured and configured != address):
+        fail("invalid_lead_email", "Use the configured shared Competitions mailbox.", 422)
     name = validated_name(full_name)
-    password = password.strip()
-    if not 12 <= len(password) <= 200:
-        fail("invalid_password", "Use a password of 12 to 200 characters.", 422)
+    password = checked_lead_password(password)
     lock_accounts(db)
     if db.scalar(select(User.id).where(User.managed_account, User.role == "competitions_chair").limit(1)):
         fail("lead_exists", "A Competitions Lead has already been provisioned.", 409)
-    if db.scalar(select(User.id).where(func.lower(User.email) == address).limit(1)):
+    if account_on_record(db, address) or live_assignment(db, email=address):
         fail("email_unavailable", "This address is already on record.", 409)
     user = User(
         email=address, full_name=name, role="competitions_chair",
@@ -537,28 +617,69 @@ def bootstrap_lead(db, email, full_name, password):
     return user
 
 
+def transition_lead(db, password):
+    """Rotate the sole Lead identity in place and require new recovery enrollment."""
+    from .recovery import clear_recovery_methods
+
+    if not managed_mode():
+        fail("managed_mode_required", "Lead transition requires MIST_ACCOUNT_MODE=managed.")
+    managed_origin()
+    signing_key()
+    recovery_key()
+    password = checked_lead_password(password)
+    lock_accounts(db)
+    user = db.scalar(select(User).where(User.managed_account, User.role == "competitions_chair", User.is_active))
+    if not user:
+        fail("lead_not_found", "No active Competitions Lead is available for transition.", 404)
+    target = configured_lead_email() or user.email
+    if target != user.email and (account_on_record(db, target) or live_assignment(db, email=target)):
+        fail("email_unavailable", "The configured mailbox is already assigned.", 409)
+    try:
+        hasher.verify(user.password_hash, password)
+    except VerifyMismatchError:
+        pass
+    else:
+        fail("unchanged_lead_password", "Choose a new Atlas password for the incoming Lead.", 422)
+
+    invalidate_user_sessions(db, user)
+    invalidate_tokens(db, user_id=user.id)
+    clear_recovery_methods(db, user)
+    db.execute(delete(AccountResetRequest).where(AccountResetRequest.email.in_([user.email, target])))
+    user.email = target
+    user.password_hash = hasher.hash(password)
+    audit(db, None, "account.lead_transition", user, "Competitions Lead access rotated and previous recovery methods removed")
+    db.commit()
+    return user
+
+
 def cli():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     bootstrap = commands.add_parser("bootstrap", help="Provision the sole Competitions Lead with an interactive password.")
-    bootstrap.add_argument("--email", required=True)
+    bootstrap.add_argument("--email", help="Defaults to MIST_COMPETITIONS_LEAD_EMAIL.")
     bootstrap.add_argument("--name", required=True)
+    commands.add_parser("transition-lead", help="Rotate the sole Lead login and clear old recovery methods.")
     sandbox = commands.add_parser("sandbox-link", help="Read one mock account link in an interactive local terminal.")
     sandbox.add_argument("--message-id", required=True, type=UUID)
     args = parser.parse_args()
     try:
-        if args.command == "bootstrap":
+        if args.command in {"bootstrap", "transition-lead"}:
             if not sys.stdin.isatty():
-                parser.error("Run bootstrap in an interactive terminal.")
+                parser.error("Run this command in an interactive terminal.")
             password = getpass("New Lead password: ")
             if password != getpass("Confirm password: "):
                 parser.error("Passwords do not match.")
             with SessionLocal() as db:
-                bootstrap_lead(db, args.email, args.name, password)
-            print("Competitions Lead provisioned.")
+                if args.command == "bootstrap":
+                    bootstrap_lead(db, args.email, args.name, password)
+                    print("Competitions Lead provisioned.")
+                else:
+                    transition_lead(db, password)
+                    print("Lead transition completed. The incoming Lead must verify a recovery method.")
         else:
-            if os.getenv("MIST_ALLOW_TEST_ACCOUNT_LINKS") != "true" or not sys.stdout.isatty():
-                parser.error("Mock account links require explicit opt-in and an interactive terminal.")
+            local_host = urlsplit(managed_origin()).hostname in {"localhost", "127.0.0.1", "::1"}
+            if os.getenv("MIST_ALLOW_TEST_ACCOUNT_LINKS") != "true" or not sys.stdout.isatty() or not local_host:
+                parser.error("Mock account links require local opt-in and an interactive terminal.")
             with SessionLocal() as db:
                 message = db.get(Outbound, args.message_id)
                 payload = account_mail_payload(db, message) if message and message.provider == "mock" else None

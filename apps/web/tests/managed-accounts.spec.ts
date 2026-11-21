@@ -122,11 +122,14 @@ test("Lead sees the shared dashboard and can invite a head into an open position
   await expect(page.getByRole("dialog").getByText(`Invited ${invitationEmail}`, { exact: true })).toBeVisible();
 });
 
-test("a head starts in their assigned department and can browse another department", async ({ page }) => {
+test("a head sees their primary competitions and can browse other competitions", async ({ page }) => {
   const { departmentQueries } = await stubWorkspace(page, worksIn);
   await page.goto("/dashboard");
   await expect(page.getByRole("heading", { name: "Operations overview" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Group Projects", exact: true })).toBeVisible();
+  await expect(page.getByText("Your primary competitions · 3 judge slots open")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Competitions activity", exact: true })).toBeVisible();
+  await expect(page.getByText("No recent competition activity.")).toBeVisible();
   await expect(page.getByText("Science Fair", { exact: true }).first()).toBeVisible();
   expect(departmentQueries).toContain("?event_year=2027");
   await expect(page.getByRole("link", { name: "User Management", exact: true })).toHaveCount(0);
@@ -145,26 +148,44 @@ test("a head starts in their assigned department and can browse another departme
   await expect(page.getByRole("heading", { name: "Access restricted", exact: true })).toBeVisible();
 });
 
-test("activation and password recovery use the issued link and keep the token out of the displayed URL", async ({ page }) => {
+test("activation requires verified recovery before opening the workspace", async ({ page }) => {
   await stubWorkspace(page, null);
-  const email = "fixture.arts@getmistified.com";
   const password = "fixture-activation-password";
   const invitationToken = "i".repeat(64);
-  const recoveryToken = "r".repeat(64);
+  const methodToken = "m".repeat(64);
+  const backup = "fixture.person@example.com";
+  const mask = "f•••@example.com";
+  let signedIn = false;
+  let recoveryRequired = true;
+  let added = false;
   let activation: unknown;
-  let recovery: unknown;
-  let requestEmail: unknown;
+  let verification: unknown;
+
+  const profile = () => ({ ...worksIn, recovery_required: recoveryRequired });
+  await page.route("**/api/auth/me", route => signedIn ? route.fulfill({ json: profile() }) : route.fulfill({ status: 401 }));
+  await page.route("**/api/auth/login", route => {
+    expect(route.request().postDataJSON()).toEqual({ email: worksIn.email, password });
+    signedIn = true;
+    return route.fulfill({ json: profile() });
+  });
+  await page.route(`**${accountUrl}/recovery`, route => route.fulfill({ json: {
+    methods: added ? [{ id: "fixture-method", kind: "email", masked_destination: mask, verified: !recoveryRequired, preferred: !recoveryRequired }] : [],
+    allow_mist_email: false,
+    sms_available: false,
+  } }));
+  await page.route(`**${accountUrl}/recovery/methods`, route => {
+    expect(route.request().postDataJSON()).toEqual({ kind: "email", destination: backup, password });
+    added = true;
+    return route.fulfill({ json: { ok: true } });
+  });
+  await page.route(`**${accountUrl}/recovery/verify`, route => {
+    verification = route.request().postDataJSON();
+    recoveryRequired = false;
+    return route.fulfill({ json: { ok: true } });
+  });
   await page.route(`**${accountUrl}/activate`, route => {
     activation = route.request().postDataJSON();
-    return route.fulfill({ json: { ok: true } });
-  });
-  await page.route(`**${accountUrl}/password-reset/request`, route => {
-    requestEmail = route.request().postDataJSON();
-    return route.fulfill({ json: { ok: true } });
-  });
-  await page.route(`**${accountUrl}/password-reset/complete`, route => {
-    recovery = route.request().postDataJSON();
-    return route.fulfill({ json: { ok: true } });
+    return route.fulfill({ json: { ok: true, email: worksIn.email } });
   });
 
   await page.goto(`/activate#token=${invitationToken}`);
@@ -178,14 +199,70 @@ test("activation and password recovery use the issued link and keep the token ou
   await expect.poll(() => activation).toEqual({
     token: invitationToken, full_name: "Fixture Arts Head", password,
   });
+  await expect(page).toHaveURL(/\/recovery-setup$/);
+  await expect(page.getByRole("heading", { name: "Set up account recovery" })).toBeVisible();
+  await page.goto("/campaigns");
+  await expect(page).toHaveURL(/\/recovery-setup$/);
+  await expect(page.getByRole("heading", { name: "Email Outreach" })).toHaveCount(0);
+  await expect(page.getByText("Use a personal email outside @getmistified.com.")).toBeVisible();
+  const sms = page.getByRole("option", { name: "Phone (SMS)" });
+  await expect(sms).toBeDisabled();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const [label, theme] of [["Light", "light"], ["Dark", "dark"], ["Purple Dark", "purple-dark"]]) {
+    await page.getByRole("button", { name: "Appearance" }).click();
+    await page.getByRole("button", { name: label, exact: true }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    const hasHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+    expect(hasHorizontalOverflow).toBe(false);
+  }
+
+  await page.getByLabel("Recovery email address").fill(backup);
+  await page.getByLabel("Current Atlas password").fill(password);
+  await page.getByRole("button", { name: "Send verification" }).click();
+  await expect(page.getByText(mask)).toBeVisible();
+  await expect(page.getByText("Unverified", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Recovery email address")).toHaveCount(0);
+  expect(await page.locator("body").innerText()).not.toContain(backup);
+
+  signedIn = false;
+  await page.goto(`/verify-recovery#token=${methodToken}`);
+  await expect(page.getByText("Sign in to verify your recovery method.")).toBeVisible();
+  await expect(page).toHaveURL(/\/verify-recovery$/);
+  await page.getByLabel("Email", { exact: true }).fill(worksIn.email);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await page.getByRole("button", { name: "Verify recovery method" }).click();
+  expect(verification).toEqual({ token: methodToken });
+  await expect(page.getByRole("heading", { name: "Operations overview" })).toBeVisible();
+});
+
+test("password recovery sends only to the supplied backup and gives a generic confirmation", async ({ page }) => {
+  await stubWorkspace(page, null);
+  const email = "fixture.arts@getmistified.com";
+  const backup = "fixture.person@example.com";
+  const password = "fixture-activation-password";
+  const recoveryToken = "r".repeat(64);
+  let recovery: unknown;
+  let request: unknown;
+  await page.route(`**${accountUrl}/password-reset/request`, route => {
+    request = route.request().postDataJSON();
+    return route.fulfill({ json: { ok: true } });
+  });
+  await page.route(`**${accountUrl}/password-reset/complete`, route => {
+    recovery = route.request().postDataJSON();
+    return route.fulfill({ json: { ok: true } });
+  });
 
   await page.goto("/login");
   await expect(page.getByRole("link", { name: /sign up|register/i })).toHaveCount(0);
   await page.getByRole("link", { name: "Forgot password?" }).click();
   await expect(page).toHaveURL(/\/forgot-password$/);
   await page.getByLabel("MIST email address").fill(email);
+  await page.getByLabel("Recovery email address").fill(backup);
   await page.getByRole("button", { name: "Request password reset" }).click();
-  await expect.poll(() => requestEmail).toEqual({ email });
+  await expect.poll(() => request).toEqual({ email, kind: "email", destination: backup });
+  await expect(page.getByRole("status")).toHaveText("If those details match a verified recovery method, you’ll receive password reset instructions.");
 
   await page.goto(`/reset-password#token=${recoveryToken}`);
   await expect(page.getByRole("heading", { name: "Reset your password", exact: true })).toBeVisible();
@@ -194,4 +271,61 @@ test("activation and password recovery use the issued link and keep the token ou
   await page.getByLabel("Confirm password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Reset password", exact: true }).click();
   await expect.poll(() => recovery).toEqual({ token: recoveryToken, password });
+});
+
+test("profile manages masked recovery methods with password confirmation", async ({ page }) => {
+  await stubWorkspace(page, ledBy);
+  const primary = { id: "fixture-email", kind: "email", masked_destination: "l•••@getmistified.com", verified: true, preferred: true };
+  const phone = { id: "fixture-phone", kind: "sms", masked_destination: "••••0100", verified: false, preferred: false };
+  const password = "fixture-profile-password";
+  let methods = [primary];
+  await page.route(`**${accountUrl}/recovery`, route => route.fulfill({ json: {
+    methods, allow_mist_email: true, sms_available: true,
+  } }));
+  await page.route(`**${accountUrl}/recovery/methods`, route => {
+    expect(route.request().postDataJSON()).toEqual({ kind: "sms", destination: "+15550000100", password });
+    methods = [primary, phone];
+    return route.fulfill({ json: { ok: true } });
+  });
+  await page.route(`**${accountUrl}/recovery/methods/fixture-phone/preferred`, route => {
+    expect(route.request().postDataJSON()).toEqual({ password });
+    methods = [{ ...primary, preferred: false }, { ...phone, verified: true, preferred: true }];
+    return route.fulfill({ json: { ok: true } });
+  });
+  await page.route(`**${accountUrl}/recovery/methods/fixture-email/remove`, route => {
+    expect(route.request().postDataJSON()).toEqual({ password });
+    methods = [{ ...phone, verified: true, preferred: true }];
+    return route.fulfill({ json: { ok: true } });
+  });
+
+  await page.goto("/profile");
+  await expect(page.getByRole("heading", { name: "Recovery methods" })).toBeVisible();
+  const list = page.getByRole("list", { name: "Registered recovery methods" });
+  const emailRow = list.getByRole("listitem").filter({ hasText: primary.masked_destination });
+  const phoneRow = list.getByRole("listitem").filter({ hasText: phone.masked_destination });
+  await expect(emailRow.getByRole("button", { name: "Remove", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Add recovery method" }).click();
+  await expect(page.getByText("Use a personal email or your individual MIST email.")).toBeVisible();
+  await page.getByLabel("Recovery method", { exact: true }).selectOption("sms");
+  await page.getByLabel("Recovery phone number").fill("+15550000100");
+  await page.getByLabel("Current Atlas password").fill(password);
+  await page.getByRole("button", { name: "Send verification" }).click();
+  await expect(phoneRow.getByText("Unverified", { exact: true })).toBeVisible();
+  await expect(emailRow.getByRole("button", { name: "Remove", exact: true })).toBeDisabled();
+  methods = [primary, { ...phone, verified: true }];
+  await page.reload();
+  await phoneRow.getByRole("button", { name: "Make preferred" }).click();
+  let dialog = page.getByRole("dialog");
+  await expect(dialog).toHaveAccessibleName("Make preferred");
+  await expect(dialog.getByRole("button", { name: "Make preferred" })).toBeVisible();
+  await dialog.getByLabel("Current Atlas password").fill(password);
+  await dialog.getByRole("button", { name: "Make preferred" }).click();
+  await expect(phoneRow.getByText("Preferred", { exact: true })).toBeVisible();
+
+  await emailRow.getByRole("button", { name: "Remove", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "Remove recovery method" });
+  await dialog.getByLabel("Current Atlas password").fill(password);
+  await dialog.getByRole("button", { name: "Remove recovery method" }).click();
+  await expect(emailRow).toHaveCount(0);
+  await expect(phoneRow.getByRole("button", { name: "Remove", exact: true })).toBeDisabled();
 });

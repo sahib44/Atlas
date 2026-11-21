@@ -50,8 +50,8 @@ def valid_hostname(hostname):
     return "%" not in hostname
 
 
-def signing_key():
-    value = os.getenv("MIST_ACCOUNT_TOKEN_KEY", "")
+def decode_key(name):
+    value = os.getenv(name, "")
     try:
         if not re.fullmatch(r"[A-Za-z0-9_-]{43,512}", value):
             raise ValueError
@@ -59,5 +59,16 @@ def signing_key():
         if len(key) < 32 or len(set(key)) < 16 or base64.urlsafe_b64encode(key).decode().rstrip("=") != value:
             raise ValueError
     except (ValueError, binascii.Error):
-        raise RuntimeError("MIST_ACCOUNT_TOKEN_KEY must be at least 32 random bytes encoded as unpadded base64url.") from None
+        raise RuntimeError(f"{name} must be at least 32 random bytes encoded as unpadded base64url.") from None
+    return key
+
+
+def signing_key():
+    return decode_key("MIST_ACCOUNT_TOKEN_KEY")
+
+
+def recovery_key():
+    key = decode_key("MIST_RECOVERY_KEY")
+    if key == signing_key():
+        raise RuntimeError("MIST_RECOVERY_KEY must be distinct from MIST_ACCOUNT_TOKEN_KEY.")
     return key

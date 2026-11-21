@@ -315,8 +315,9 @@ the `mist` package under `apps/api`; do not duplicate models in `apps/worker`.
   committed mock receipts; no Redis.
 - Database-backed metrics follow the current user's record visibility. Overdue
   means an open ticket has had no public message for more than three days.
-- The application is an MVP for local testing: no password-reset/SSO, production
-  account provisioning, rich-text editor, or real email.
+- The application is a local prototype. Managed accounts support recovery with
+  mock delivery. Real email, SMS, SSO, and production provisioning remain
+  unconfigured.
 - Rules and procedures uploads are limited to 5 MB PDF/DOCX files. The prototype
   has no malware scanning, document version history, or production retention policy.
 - The historical nominations sheet supplies only competition names for the
