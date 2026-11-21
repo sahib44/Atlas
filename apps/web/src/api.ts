@@ -180,7 +180,7 @@ export const label = (s: unknown) =>
     .replace(/\b\w/g, (c) => c.toUpperCase());
 export function accountRoleLabel(user: User) {
   if (can(user, "manage_accounts")) return "Competitions Lead";
-  if (user.managed_account && user.department) return `${user.department.name} Head`;
+  if (user.department) return `${user.department.name} Head`;
   return label(user.role);
 }
 export const date = (s: string | undefined) =>

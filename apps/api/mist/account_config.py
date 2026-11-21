@@ -7,12 +7,24 @@ import os
 import re
 from urllib.parse import urlsplit
 
+E2E_GROUP_PROJECTS_HEAD_EMAIL = "gch@example.com"
+
 
 def managed_mode():
     mode = os.getenv("MIST_ACCOUNT_MODE", "sandbox")
     if mode not in {"sandbox", "managed"}:
         raise RuntimeError("MIST_ACCOUNT_MODE must be sandbox or managed.")
     return mode == "managed"
+
+
+def e2e_demo_mode():
+    from .db import engine
+
+    return (
+        os.getenv("MIST_E2E_DEMO_ACCOUNTS") == "1"
+        and engine.url.database == "mist_e2e"
+        and not managed_mode()
+    )
 
 
 def managed_origin():

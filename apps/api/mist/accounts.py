@@ -18,7 +18,7 @@ from pydantic import Field
 from sqlalchemy import String, cast, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 
-from .account_config import managed_mode, managed_origin, recovery_key, signing_key
+from .account_config import E2E_GROUP_PROJECTS_HEAD_EMAIL, e2e_demo_mode, managed_mode, managed_origin, recovery_key, signing_key
 from .auth import current_user, fail, hasher
 from .db import SessionLocal, get_db, now
 from .models import AccountResetRequest, AccountToken, Audit, Department, DepartmentAssignment, Outbound, PilotCompetition, RecoveryMethod, Session, User
@@ -114,7 +114,14 @@ def live_assignment(db, **criteria):
 
 
 def department_for(db, user):
-    if not managed_mode() or not user.managed_account or user.role != "competitions_member":
+    if user.role != "competitions_member":
+        return None
+    if not user.managed_account:
+        if user.email == E2E_GROUP_PROJECTS_HEAD_EMAIL and e2e_demo_mode():
+            slug, name, category_slug = next(item for item in DEPARTMENTS if item[0] == "group-projects")
+            return {"slug": slug, "name": name, "category_slug": category_slug}
+        return None
+    if not managed_mode():
         return None
     assignment = live_assignment(db, user_id=user.id, email=user.email)
     if assignment is None:

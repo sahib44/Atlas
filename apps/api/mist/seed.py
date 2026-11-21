@@ -2,7 +2,8 @@ import csv
 import os
 from pathlib import Path
 from sqlalchemy import select, delete
-from .account_config import managed_mode
+from sqlalchemy.dialects.postgresql import insert
+from .account_config import E2E_GROUP_PROJECTS_HEAD_EMAIL, e2e_demo_mode, managed_mode
 from .db import SessionLocal
 from .models import User, Session, Committee, Category, Qualification, PilotCompetition
 from .competition_catalog import CATEGORIES
@@ -79,6 +80,15 @@ def seed_competition_accounts(db, rotate_passwords=False):
                 user.full_name = name
         else:
             db.add(User(email=email, role=role, full_name=name, password_hash=hasher.hash(account_password(role)), permissions=[]))
+    if e2e_demo_mode():
+        for email, password, role, name in (
+            ("lead@example.com", "lead", "competitions_chair", "Competitions Lead"),
+            (E2E_GROUP_PROJECTS_HEAD_EMAIL, "gch", "competitions_member", "Group Projects Head"),
+        ):
+            if db.scalar(select(User.id).where(User.email == email)) is None:
+                db.execute(insert(User).values(
+                    email=email, password_hash=hasher.hash(password), role=role, full_name=name,
+                ).on_conflict_do_nothing(index_elements=[User.email]))
     db.commit()
 
 

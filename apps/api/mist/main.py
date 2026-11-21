@@ -91,7 +91,7 @@ def session_profile(db, user):
     from .recovery import has_verified_recovery
 
     view = UserView.model_validate(user)
-    department = department_for(db, user) if user.managed_account else None
+    department = department_for(db, user)
     if department:
         view.department = UserDepartmentView.model_validate(department)
     view.recovery_required = user.managed_account and not has_verified_recovery(db, user)

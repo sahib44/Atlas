@@ -80,6 +80,15 @@ The former Settings catalog screen has been removed from the organizer interface
 For invitation-only accounts and the Competitions Lead bootstrap, see the
 [managed account and private deployment guide](docs/managed-accounts.md).
 
+### End-to-end preview accounts
+
+The disposable E2E Compose stack also seeds these fixed test logins.
+
+| Email | Password | Role |
+| --- | --- | --- |
+| `lead@example.com` | `lead` | Competitions Lead (Chair) |
+| `gch@example.com` | `gch` | Group Projects Head |
+
 ## Configuration
 
 The local `.env` file is required and ignored by Git. Choose passwords without

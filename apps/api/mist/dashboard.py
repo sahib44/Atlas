@@ -20,7 +20,7 @@ def department_dashboard(
     from .accounts import department_for
     from .pilots import active_competitions, add_competition_summaries, tournament_options
 
-    department = department_for(db, user) if user.managed_account else None
+    department = department_for(db, user)
     if not department or not allowed(user, "judges"):
         fail("forbidden", "Your account has no assigned competitions dashboard.", 403)
     year = event_year if event_year is not None else tournament_options(db)["default_year"]

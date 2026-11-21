@@ -176,7 +176,7 @@ export function Dashboard() {
     </Heading>
     <ErrorBox error={query.error} />
 
-    {user?.managed_account && user.department && <DepartmentOverview department={user.department} tournament={tournament} />}
+    {user?.department && <DepartmentOverview department={user.department} tournament={tournament} />}
 
     {summaryCards.length > 0 && <section className="overview-metrics" aria-label="Workspace metrics">
       {summaryCards.map(({ link, label: title, icon: Icon, value }) => (

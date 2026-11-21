@@ -11,6 +11,7 @@ services:
     ports: !override ["127.0.0.1:18000:8000"]
     environment:
       MIST_ACCOUNT_MODE: sandbox
+      MIST_E2E_DEMO_ACCOUNTS: '1'
       COMPETITIONS_CHAIR_PASSWORD: ""
       COMPETITIONS_MEMBER_PASSWORD: ""
       DATABASE_URL: postgresql+psycopg://mist:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/mist_e2e
@@ -27,6 +28,7 @@ services:
     profiles: ["e2e"]
     environment:
       MIST_ACCOUNT_MODE: sandbox
+      MIST_E2E_DEMO_ACCOUNTS: '1'
       COMPETITIONS_CHAIR_PASSWORD: ""
       COMPETITIONS_MEMBER_PASSWORD: ""
       DATABASE_URL: postgresql+psycopg://mist:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/mist_e2e
