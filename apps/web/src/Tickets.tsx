@@ -151,6 +151,7 @@ export function TicketNew() {
 export type TicketComposerState = {
   mode: "messages" | "notes";
   reply: string;
+  reply_subject?: string;
   note: string;
   resolution_note: string;
   target_status: string;
@@ -212,6 +213,10 @@ export function ReplyComposer({
     </div>
     <form onSubmit={event => { event.preventDefault(); void onSend(); }}>
       {resolving && <Field label="Resolution note *"><textarea aria-label="Resolution note" disabled={pending} ref={resolution} required rows={3} className="resolution-note-input" value={draft.resolution_note} onChange={event => onChange({ ...draft, resolution_note: event.target.value })} /></Field>}
+      {replyMode && draft.reply_subject !== undefined && <Field label="Public reply subject">
+        <input aria-label="Public reply subject" value={draft.reply_subject} maxLength={1000} disabled={pending}
+          required={Boolean(draft.reply.trim())} onChange={event => onChange({ ...draft, reply_subject: event.target.value })} />
+      </Field>}
       <div className="field ticket-composer-body">
         <div className="ticket-composer-label">
           <label htmlFor={bodyId}>{bodyLabel}{bodyQualifier}</label>
@@ -291,14 +296,26 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
   const targetStatus = changingStatus ? draft.target_status : draft.mode === "messages" ? "waiting_on_requester" : "";
   const body = (draft.mode === "messages" ? draft.reply : draft.note).trim();
   const resolutionNote = changingStatus && draft.target_status === "resolved" ? draft.resolution_note.trim() : "";
-  const matching = (review: Row) => review.created_by === user?.id && review.kind === draft.mode && review.body === body && review.target_status === targetStatus && review.resolution_note === resolutionNote && review.base_version === ticket.version;
+  const defaultReplySubject = ticket.reply_subject ?? `Re: ${ticket.public_number} — ${ticket.subject}`;
+  const subject = (draft.reply_subject ?? defaultReplySubject).trim();
+  const includesReply = draft.mode === "messages" && !!body;
+  const subjectFields = includesReply && draft.reply_subject !== undefined ? { reply_subject: subject } : {};
+  const standaloneNote = (review: Row) => review.kind === "notes" && !!review.body && !review.target_status && !review.resolution_note;
+  const publicNoteApproval = (review: Row) => standaloneNote(review) && review.public_reply_approved === true;
+  const matching = (review: Row) => {
+    if (review.created_by !== user?.id || review.body !== body || review.base_version !== ticket.version) return false;
+    if (includesReply && (review.reply_subject || defaultReplySubject) !== subject) return false;
+    if (review.kind === draft.mode) {
+      return review.target_status === targetStatus && review.resolution_note === resolutionNote;
+    }
+    return includesReply && targetStatus === "waiting_on_requester" && !resolutionNote && publicNoteApproval(review);
+  };
   const approved = reviews.data?.items.find(review => review.status === "approved" && matching(review));
   const approvalPending = reviews.data?.items.some(review => review.status === "pending_approval" && matching(review)) || false;
-  const includesReply = draft.mode === "messages" && !!draft.reply.trim();
   const needsApproval = includesReply && !isChair;
   const statusValid = !changingStatus ? false : draft.target_status === "waiting_on_requester" ? !!draft.reply.trim() && draft.mode === "messages" : draft.target_status === "waiting_on_organizer" ? !!draft.note.trim() && draft.mode === "notes" : draft.target_status === "resolved" ? !!resolutionNote : true;
   const normalValid = draft.mode === "notes" ? !!draft.note.trim() : !!draft.reply.trim() && ticket.status !== "closed";
-  const valid = changingStatus ? statusValid : normalValid;
+  const valid = (changingStatus ? statusValid : normalValid) && (!includesReply || !!subject);
   function changeStatus(status: string) {
     setDraft(current => ({ ...current, target_status: status, mode: status === "waiting_on_organizer" ? "notes" : ["waiting_on_requester", "resolved"].includes(status) ? "messages" : current.mode }));
     setLocalError(undefined);
@@ -308,12 +325,17 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
     }
   }
   async function requestApproval() {
-    const payload = { kind: draft.mode, body, target_status: targetStatus, resolution_note: resolutionNote, expected_version: ticket.version };
+    const payload = { kind: draft.mode, body, ...subjectFields, target_status: targetStatus, resolution_note: resolutionNote, expected_version: ticket.version };
     try {
       const review = await action.mutateAsync({ path: `/tickets/${id}/drafts`, body: { ...payload, request_id: requestKey(reviewRequest, payload) } });
-      setDraft(current => ({ ...current, [draft.mode === "messages" ? "reply" : "note"]: review.body, resolution_note: resolutionNote ? review.resolution_note : current.resolution_note }));
+      setDraft(current => ({
+        ...current,
+        [draft.mode === "messages" ? "reply" : "note"]: review.body,
+        reply_subject: includesReply && current.reply_subject !== undefined ? review.reply_subject || subject : current.reply_subject,
+        resolution_note: resolutionNote ? review.resolution_note : current.resolution_note,
+      }));
       reviewRequest.current = null;
-      setNotice("Draft sent to the chair for approval. Approval will not send the email automatically.");
+      setNotice(review.status === "approved" ? "This draft is already approved." : "Draft sent to the chair for approval. Approval will not send the email automatically.");
       setLocalError(undefined);
     } catch (error) { setLocalError(error); }
   }
@@ -323,20 +345,35 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
     if (needsApproval && !approved && !statusOnly) { setLocalError("Request chair approval before sending this reply."); return; }
     try {
       if (changingStatus || statusOnly) {
-        const payload = { status: statusOnly || draft.target_status, reply_body: !statusOnly && includesReply ? draft.reply.trim() : "", internal_note: !statusOnly && draft.mode === "notes" ? draft.note.trim() : "", resolution_note: statusOnly ? "" : resolutionNote, approval_id: statusOnly ? null : approved?.id || null, expected_version: ticket.version };
+        const payload = { status: statusOnly || draft.target_status, reply_body: !statusOnly && includesReply ? body : "", ...(!statusOnly ? subjectFields : {}), internal_note: !statusOnly && draft.mode === "notes" ? body : "", resolution_note: statusOnly ? "" : resolutionNote, approval_id: statusOnly ? null : approved?.id || null, expected_version: ticket.version };
         await action.mutateAsync({ path: `/tickets/${id}/status`, body: { ...payload, request_id: requestKey(sendRequest, payload) } });
       } else {
-        const payload = { body, approval_id: approved?.id || null };
+        const payload = { body, ...subjectFields, approval_id: approved?.id || null };
         await action.mutateAsync({ path: `/tickets/${id}/${draft.mode}`, body: { ...payload, request_id: requestKey(sendRequest, payload) } });
       }
       sendRequest.current = null;
-      setDraft(current => ({ ...current, reply: !statusOnly && current.mode === "messages" ? "" : current.reply, note: !statusOnly && current.mode === "notes" ? "" : current.note, resolution_note: statusOnly ? current.resolution_note : "", target_status: "" }));
+      setDraft(current => ({ ...current, reply: !statusOnly && current.mode === "messages" ? "" : current.reply, reply_subject: !statusOnly && current.mode === "messages" ? undefined : current.reply_subject, note: !statusOnly && current.mode === "notes" ? "" : current.note, resolution_note: statusOnly ? current.resolution_note : "", target_status: "" }));
       setNotePage(1); setMessagePage(undefined); setActivityPage(1); setLocalError(undefined);
       setNotice(statusOnly ? `Ticket status: ${label(statusOnly)}.` : changingStatus ? "Ticket status and its reply or note were saved together." : draft.mode === "notes" ? "Private note saved." : "Approved reply queued in the sandbox outbox.");
     } catch (error) { setLocalError(error); }
   }
   function loadApproved(review: Row) {
-    setDraft({ mode: review.kind, reply: review.kind === "messages" ? review.body : draft.reply, note: review.kind === "notes" ? review.body : draft.note, resolution_note: review.resolution_note, target_status: review.target_status && review.target_status !== ticket.status ? review.target_status : "" });
+    setDraft(current => ({
+      mode: review.kind,
+      reply: review.kind === "messages" ? review.body : current.reply,
+      reply_subject: review.kind === "messages" && review.body ? review.reply_subject || defaultReplySubject : current.reply_subject,
+      note: review.kind === "notes" ? review.body : current.note,
+      resolution_note: review.resolution_note,
+      target_status: review.target_status && review.target_status !== ticket.status ? review.target_status : "",
+    }));
+    setLocalError(undefined);
+    setNotice("");
+    setFocusToken(value => value + 1);
+  }
+  function loadAsPublicReply(review: Row) {
+    setDraft(current => ({ ...current, mode: "messages", reply: review.body, reply_subject: review.reply_subject || defaultReplySubject, resolution_note: "", target_status: "" }));
+    setLocalError(undefined);
+    setNotice("Approved for public reply. Review the subject and message before sending.");
     setFocusToken(value => value + 1);
   }
   const currentReviews = reviews.data?.items.filter(review =>
@@ -356,19 +393,37 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
   }
 
   function reviewCard(review: Row) {
+    const current = currentReviews.includes(review);
+    const canApprove = current && review.status === "pending_approval" && isChair;
+    const canLoad = current && review.status === "approved" && review.created_by === user?.id;
+    const canApproveForPublic = canApprove && standaloneNote(review) && ticket.status !== "closed";
+    async function approve(allowPublicReply = false) {
+      try {
+        await action.mutateAsync({
+          path: `/tickets/${id}/drafts/${review.id}/approve`,
+          body: allowPublicReply ? { allow_public_reply: true } : undefined,
+        });
+        setNotice(allowPublicReply ? "Draft approved for public reply. The organizer can review and send it."
+          : review.kind === "notes" ? "Draft approved for internal use. The organizer can save it as a private note."
+            : "Draft approved. The organizer can now send or save it.");
+      } catch {}
+    }
     return <article id={`draft-${review.id}`} key={review.id} className={`ticket-review ${linkedDraft === review.id ? "highlighted-review" : ""}`}>
       <div className="ticket-review-meta"><strong>{review.author_name} · {review.kind === "notes" ? "Internal note" : "Public reply"}</strong><Badge value={review.status} /><time dateTime={review.created_at}>{date(review.created_at)}</time></div>
       {review.target_status && <small>Proposed status: {label(review.target_status)}</small>}
+      {(canApproveForPublic || publicNoteApproval(review) || (review.kind === "messages" && review.body)) &&
+        <p className="caption"><strong>Reply subject</strong> {review.reply_subject || defaultReplySubject}</p>}
+      {publicNoteApproval(review) && <p className="caption">{current ? "Approved for public reply" : "Public reply approval recorded"}</p>}
       {review.body && <p className="message-body">{review.body}</p>}
       {review.resolution_note && <div className="review-resolution"><strong>Private resolution note</strong><p className="message-body">{review.resolution_note}</p></div>}
-      {currentReviews.includes(review) && review.status === "pending_approval" && isChair && <button className="primary" disabled={action.isPending} onClick={async () => {
-        try {
-          await action.mutateAsync({ path: `/tickets/${id}/drafts/${review.id}/approve` });
-          setNotice("Draft approved. The organizer can now send or save it.");
-        } catch {}
-      }}>Approve draft</button>}
-      {currentReviews.includes(review) && review.status === "approved" && review.created_by === user?.id &&
-        <button type="button" onClick={() => loadApproved(review)}>Load approved draft</button>}
+      {canApproveForPublic && <p className="caption">Public approval clears the subject and message shown here for {ticket.requester_email}.</p>}
+      {(canApprove || canLoad) && <div className="ticket-composer-actions">
+        {canApprove && <button type="button" className="primary" disabled={action.isPending} onClick={() => void approve()}>Approve draft</button>}
+        {canApproveForPublic && <button type="button" disabled={action.isPending} onClick={() => void approve(true)}>Approve for public reply</button>}
+        {canLoad && <button type="button" disabled={action.isPending} onClick={() => loadApproved(review)}>Load approved draft</button>}
+        {canLoad && publicNoteApproval(review) && ticket.status !== "closed" &&
+          <button type="button" disabled={action.isPending} onClick={() => loadAsPublicReply(review)}>Load as Public Reply</button>}
+      </div>}
     </article>;
   }
 
@@ -402,6 +457,7 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
             <header><span className="avatar" aria-hidden="true">{row.sender_name.trim().split(/\s+/).slice(0, 2).map((part: string) => part[0]).join("")}</span>
               <div><strong>{row.sender_name}</strong> <span>&lt;{row.sender_email}&gt;</span>
                 <small>{row.message_type === "staff_reply" ? `To: ${ticket.requester_email}` : "To: Competitions"}</small>
+                {row.subject && row.subject !== defaultReplySubject && <small>Subject: {row.subject}</small>}
               </div><time dateTime={row.created_at}>{date(row.created_at)}</time>
             </header>
             <p className="message-body">{row.body}</p>
@@ -420,7 +476,7 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
           </details>}
         </section>}
       </div>
-      <ReplyComposer draft={draft} onChange={setDraft} changingStatus={changingStatus} pending={action.isPending}
+      <ReplyComposer draft={draft} onChange={next => { setDraft(next); setNotice(""); }} changingStatus={changingStatus} pending={action.isPending}
         error={simpleStatus ? null : localError || action.error} onSend={() => submit()}
         onRequestApproval={isChair || simpleStatus ? undefined : requestApproval}
         needsApproval={!simpleStatus && needsApproval} approved={!!approved} approvalPending={approvalPending}
@@ -495,7 +551,7 @@ function TicketWorkspace({ id, listPath }: { id: string; listPath: string }) {
         <section className="ticket-forward-preview" aria-label="Forwarded message preview">
           <strong>Quoted email</strong>
           <div>From: {forwarding.sender_name} &lt;{forwarding.sender_email}&gt;</div>
-          <div>Subject: {ticket.subject}</div>
+          <div>Subject: {forwarding.subject || ticket.subject}</div>
           <time dateTime={forwarding.created_at}>{date(forwarding.created_at)}</time>
           <p className="message-body">{forwarding.body}</p>
         </section>

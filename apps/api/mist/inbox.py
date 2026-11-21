@@ -1,4 +1,5 @@
 """Shared team inbox. Incoming messages are simulated until a mailbox is connected."""
+import re
 from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import and_, select, func, or_, update, union_all, literal
@@ -230,8 +231,14 @@ def receive(data: IncomingEmail, user=Depends(require("campaigns")), db=Depends(
     else:
         from .tickets import ticket_scope
         possible = db.scalars(ticket_scope(user).where(Ticket.requester_email == address).order_by(Ticket.created_at.desc())).all()
-        normalized = data.subject.removeprefix("Re: ").removeprefix("re: ").strip().casefold()
-        ticket = next((t for t in possible if t.public_number in data.subject or t.subject.casefold() == normalized), None)
+        # Atlas puts the thread number before any editable reply subject.
+        # A number mentioned later in that subject must not take priority.
+        thread = re.match(r"^(?:re:\s*)+(MD-[0-9]+)\s+—\s", data.subject.strip(), re.IGNORECASE)
+        if thread:
+            ticket = next((row for row in possible if row.public_number == thread[1].upper()), None)
+        else:
+            normalized = data.subject.removeprefix("Re: ").removeprefix("re: ").strip().casefold()
+            ticket = next((row for row in possible if row.public_number in data.subject or row.subject.casefold() == normalized), None)
         if ticket:
             ticket = db.scalar(select(Ticket).where(Ticket.id == ticket.id).with_for_update().execution_options(populate_existing=True))
         if not ticket:

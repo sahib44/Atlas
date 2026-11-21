@@ -607,6 +607,8 @@ class TicketDraft(Record, Base):
     created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
     kind: Mapped[str] = mapped_column(String(20))
     body: Mapped[str] = mapped_column(Text, default="")
+    reply_subject: Mapped[str | None] = mapped_column(String(1000))
+    public_reply_approved: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     target_status: Mapped[str] = mapped_column(String(40), default="")
     resolution_note: Mapped[str] = mapped_column(Text, default="")
     base_version: Mapped[int] = mapped_column(Integer)
@@ -614,6 +616,13 @@ class TicketDraft(Record, Base):
     request_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), unique=True)
     approved_by: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
     approved_at: Mapped[object | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        CheckConstraint(
+            "NOT public_reply_approved OR (kind = 'notes' AND body <> '' AND target_status = '' "
+            "AND resolution_note = '' AND reply_subject IS NOT NULL)",
+            name="ck_ticket_draft_public_reply_scope",
+        ),
+    )
 
 
 class TicketAction(Record, Base):

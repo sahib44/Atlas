@@ -184,6 +184,7 @@ class Content(Input):
     body: str = Field(min_length=1, max_length=30000)
     request_id: UUID
     approval_id: UUID | None = None
+    reply_subject: str | None = Field(default=None, max_length=1000)
 
 
 class TicketStatus(Input):
@@ -196,6 +197,7 @@ class TicketStatus(Input):
         "closed",
     ]
     reply_body: str = Field(default="", max_length=30000)
+    reply_subject: str | None = Field(default=None, max_length=1000)
     internal_note: str = Field(default="", max_length=30000)
     resolution_note: str = Field(default="", max_length=30000)
     request_id: UUID = Field(default_factory=uuid4)
@@ -248,7 +250,12 @@ class ConversationRead(Input):
 class TicketDraftIn(Input):
     kind: Literal["messages", "notes"]
     body: str = Field(default="", max_length=30000)
+    reply_subject: str | None = Field(default=None, max_length=1000)
     target_status: str = Field(default="", max_length=40)
     resolution_note: str = Field(default="", max_length=30000)
     expected_version: int
     request_id: UUID
+
+
+class TicketDraftApprovalIn(Input):
+    allow_public_reply: bool = False

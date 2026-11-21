@@ -25,6 +25,48 @@ def text_value(value):
     return clean(value).strip()
 
 
+def reply_subject_prefix(ticket):
+    return f"Re: {ticket.public_number} — "
+
+
+def default_reply_subject(ticket):
+    subject = " ".join(ticket.subject.splitlines()).strip() or "Competition ticket"
+    return reply_subject_prefix(ticket) + subject
+
+
+def reply_subject_value(ticket, value):
+    if value is None:
+        return default_reply_subject(ticket)
+    subject = text_value(value)
+    if not subject or value.splitlines() != [value]:
+        fail("invalid_subject", "Enter a reply subject on one line.", 422)
+    prefix = reply_subject_prefix(ticket)
+    if not subject.startswith(prefix):
+        subject = prefix + subject
+    if len(subject) > 1000:
+        fail("invalid_subject", "Enter a reply subject on one line with at most 1,000 characters.", 422)
+    return subject
+
+
+def draft_reply_subject(draft, ticket):
+    return draft.reply_subject or default_reply_subject(ticket)
+
+
+def can_approve_public_reuse(draft):
+    return draft.kind == "notes" and bool(draft.body) and not draft.target_status and not draft.resolution_note
+
+
+def approval_matches(draft, ticket, kind, body, target_status, resolution_note, subject):
+    if draft.body != body or (subject is not None and draft_reply_subject(draft, ticket) != subject):
+        return False
+    if draft.kind == kind:
+        return draft.target_status == target_status and draft.resolution_note == resolution_note
+    return bool(
+        kind == "messages" and target_status == "waiting_on_requester" and not resolution_note
+        and draft.public_reply_approved and can_approve_public_reuse(draft)
+    )
+
+
 class ForwardRequest(ForwardIn):
     request_id: UUID | None = None
 
@@ -46,12 +88,17 @@ def forward_request(db, route, actor_id, request_id, source_id, address, note):
     return key, existing
 
 
-def supersede_drafts(db, ticket, author_id=None, kind=None):
+def supersede_drafts(db, ticket, author_id=None, kind=None, *, preserve_public=False):
     stmt = select(TicketDraft).where(TicketDraft.ticket_id == ticket.id, TicketDraft.status.in_(["pending_approval", "approved"]))
     if author_id:
         stmt = stmt.where(TicketDraft.created_by == author_id)
     if kind:
         stmt = stmt.where(TicketDraft.kind == kind)
+    if preserve_public:
+        stmt = stmt.where(~(
+            TicketDraft.public_reply_approved & (TicketDraft.status == "approved")
+            & (TicketDraft.base_version == ticket.version)
+        ))
     ids = []
     for draft in db.scalars(stmt):
         draft.status = "superseded"
@@ -60,9 +107,18 @@ def supersede_drafts(db, ticket, author_id=None, kind=None):
         db.execute(update(Notification).where(Notification.draft_id.in_(ids)).values(read_at=now()))
 
 
-def changed(db, ticket):
+def changed(db, ticket, *, private_note_only=False):
+    if private_note_only:
+        # Private notes change no part of the explicitly approved public envelope.
+        # Other approvals still need review after the ticket version advances.
+        db.execute(update(TicketDraft).where(
+            TicketDraft.ticket_id == ticket.id,
+            TicketDraft.public_reply_approved,
+            TicketDraft.status == "approved",
+            TicketDraft.base_version == ticket.version,
+        ).values(base_version=ticket.version + 1))
     ticket.version += 1
-    supersede_drafts(db, ticket)
+    supersede_drafts(db, ticket, preserve_public=private_note_only)
 
 
 def mark_ticket_notifications(db, ticket):
@@ -96,7 +152,7 @@ def current_approval(db, draft, *, lock=False):
     return revoked is None
 
 
-def consume_approval(db, ticket, user, approval_id, kind, body, target_status, resolution_note):
+def consume_approval(db, ticket, user, approval_id, kind, body, target_status, resolution_note, subject=None):
     if not approval_id:
         if allowed(user, "ticket_approve") and ticket_approver(db, user.id, lock=True):
             return
@@ -107,14 +163,19 @@ def consume_approval(db, ticket, user, approval_id, kind, body, target_status, r
         or draft.status != "approved" or not current_approval(db, draft, lock=True)
     ):
         fail("chair_approval_required", "This draft has not been approved for your account.", 403)
-    if (draft.base_version != ticket.version or draft.kind != kind or draft.body != body or draft.target_status != target_status or draft.resolution_note != resolution_note):
-        fail("approval_changed", "The reply or ticket changed. Request chair approval again.", 409)
+    if draft.base_version != ticket.version or not approval_matches(
+        draft, ticket, kind, body, target_status, resolution_note, subject
+    ):
+        fail("approval_changed", "The approval does not match this action. Request chair approval for the reply.", 409)
+    if kind == "notes" and draft.public_reply_approved:
+        # Saving the private copy does not use the one-time public send approval.
+        return
     draft.status = "used"
     db.execute(update(Notification).where(Notification.draft_id == draft.id).values(read_at=now()))
 
 
-def queue_reply(db, ticket, user, body, request_id):
-    message = Outbound(recipient_email=contact_email(ticket.requester_email), recipient_name=ticket.requester_name, subject=f"Re: {ticket.public_number} — {ticket.subject}", body_text=body, related_ticket_id=ticket.id, idempotency_key=f"ticket:{ticket.id}:{request_id}")
+def queue_reply(db, ticket, user, body, request_id, subject):
+    message = Outbound(recipient_email=contact_email(ticket.requester_email), recipient_name=ticket.requester_name, subject=subject, body_text=body, related_ticket_id=ticket.id, idempotency_key=f"ticket:{ticket.id}:{request_id}")
     db.add(message)
     db.flush()
     public = TicketMessage(ticket_id=ticket.id, message_type="staff_reply", sender_name=user.full_name, sender_email=user.email, body=body, created_by=user.id, outbound_message_id=message.id)
@@ -129,6 +190,10 @@ def apply_status_action(db, ticket, data, user):
     internal = text_value(data.internal_note)
     resolution = text_value(data.resolution_note)
     payload = {"status": data.status, "reply_body": body, "internal_note": internal, "resolution_note": resolution}
+    subject = reply_subject_value(ticket, data.reply_subject) if body else None
+    if subject is not None and subject != default_reply_subject(ticket):
+        # Preserve the signature for pre-migration actions and default subjects.
+        payload["reply_subject"] = subject
     signature = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     existing = db.scalar(select(TicketAction).where(TicketAction.request_id == data.request_id))
     if existing:
@@ -148,11 +213,11 @@ def apply_status_action(db, ticket, data, user):
     if body:
         if data.approval_id and internal:
             fail("approval_changed", "A private note was added to the approved reply. Save it separately.", 409)
-        consume_approval(db, ticket, user, data.approval_id, "messages", body, data.status, resolution)
+        consume_approval(db, ticket, user, data.approval_id, "messages", body, data.status, resolution, subject)
     elif data.approval_id:
         consume_approval(db, ticket, user, data.approval_id, "notes" if internal else "messages", internal, data.status, resolution)
     before = serialize(ticket)
-    public = queue_reply(db, ticket, user, body, data.request_id) if body else None
+    public = queue_reply(db, ticket, user, body, data.request_id, subject) if body else None
     for kind, note_body in (("internal", internal), ("resolution", resolution)):
         if note_body:
             db.add(TicketNote(ticket_id=ticket.id, body=note_body, kind=kind, created_by=user.id))
